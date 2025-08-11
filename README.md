@@ -13,7 +13,7 @@
 
 この概要では、**システム設計の高レベルな構造** と **アーキテクチャ上の決定** に焦点を当てます。
 特定機能の詳細な実装については、**Core Systems**、**E-commerce Features**、**User Interface System** を参照してください。
-
+[DeepWiki](https://deepwiki.com/myoshi2891/Next-Store/1-overview)
 ---
 
 ## システムの目的とアーキテクチャ
