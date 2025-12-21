@@ -1,0 +1,58 @@
+{
+    "default": true,
+    "MD001": false,
+    "MD002": true,
+    "MD003": { "style": "atx" },
+    "MD004": { "style": "consistent" },
+    "MD007": { "indent": 2 },
+    "MD009": { "br_spaces": 2 },
+    "MD012": true,
+    "MD013": {
+        "line_length": 1000,
+        "code_blocks": false,
+        "tables": false,
+        "headings": false,
+        "strict": false
+    },
+    "MD018": false,
+    "MD019": false,
+    "MD022": false,
+    "MD024": { "siblings_only": true },
+    "MD025": { "front_matter_title": "" },
+    "MD026": { "punctuation": ".,;:!。，；：" },
+    "MD029": false,
+    "MD030": {
+        "ul_single": 1,
+        "ol_single": 1,
+        "ul_multi": 1,
+        "ol_multi": 1
+    },
+    "MD031": true,
+    "MD032": false,
+    "MD033": {
+        "allowed_elements": [
+            "h1",
+            "h2",
+            "p",
+            "i",
+            "footer",
+            "br",
+            "div",
+            "sub",
+            "sup",
+            "kbd",
+            "details",
+            "summary"
+        ]
+    },
+    "MD034": false,
+    "MD036": false,
+    "MD038": true,
+    "MD040": false,
+    "MD041": false,
+    "MD042": false,
+    "MD046": { "style": "fenced" },
+    "MD048": { "style": "backtick" },
+    "MD058": false,
+    "MD060": false
+}
