@@ -1,3 +1,8 @@
+/**
+ * Renders a centered, footer-style disclaimer banner indicating the site is a portfolio project and not actively operated.
+ *
+ * @returns The JSX element for the disclaimer banner.
+ */
 function DisclaimerBanner() {
 	return (
 		<div className="bg-muted py-4 mt-auto border-t">

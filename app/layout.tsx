@@ -14,6 +14,12 @@ export const metadata: Metadata = {
 	description: "A nifty store built with Next.js",
 };
 
+/**
+ * Application root layout that provides global context, navigation, and the main page container.
+ *
+ * @param children - The page content to render inside the main container.
+ * @returns The root layout JSX element composing global providers, the navbar, the main content container, and the disclaimer banner.
+ */
 export default function RootLayout({
 	children,
 }: Readonly<{
