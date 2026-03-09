@@ -5,6 +5,7 @@ import Navbar from "@/components/navbar/Navbar";
 import Container from "@/components/global/Container";
 import Providers from "./providers";
 import { ClerkProvider } from "@clerk/nextjs";
+import DisclaimerBanner from "@/components/global/DisclaimerBanner";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -21,10 +22,11 @@ export default function RootLayout({
 	return (
 		<ClerkProvider>
 			<html lang="en" suppressHydrationWarning>
-				<body className={inter.className}>
+				<body className={`${inter.className} flex flex-col min-h-screen`}>
 					<Providers>
 						<Navbar />
 						<Container className="py-20">{children}</Container>
+						<DisclaimerBanner />
 					</Providers>
 				</body>
 			</html>
