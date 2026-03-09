@@ -4,22 +4,19 @@ import { NextResponse } from "next/server";
 const isPublicRoute = createRouteMatcher(["/", "/products(.*)", "/about"]);
 const isAdminRoute = createRouteMatcher(["/admin(.*)"]);
 
-export default clerkMiddleware((auth, req) => {
-	const isAdminUser = auth().userId === process.env.ADMIN_USER_ID;
+export default clerkMiddleware(async (auth, req) => {
+	const { userId } = await auth();
+	const isAdminUser = userId === process.env.ADMIN_USER_ID;
 
 	if (isAdminRoute(req) && !isAdminUser) {
 		return NextResponse.redirect(new URL("/", req.url));
 	}
 
 	if (!isPublicRoute(req)) {
-		const result = auth().protect(); // ★ protectを呼んで
-		if (result instanceof NextResponse) {
-			return result; // ★ NextResponseだったら返す
-		}
-		// ★ それ以外は何もしない (＝認証OKなので続行)
+		await auth.protect();
 	}
 
-	return NextResponse.next(); // ★ 忘れずに普通に次へ
+	return NextResponse.next();
 });
 
 export const config = {

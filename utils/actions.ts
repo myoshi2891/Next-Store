@@ -66,7 +66,7 @@ export const fetchSingleProduct = async (productId: string) => {
 };
 
 export const createProductAction = async (
-	prevState: any,
+	prevState: { message: string },
 	formData: FormData
 ): Promise<{ message: string }> => {
 	const user = await getAuthUser();
@@ -132,7 +132,7 @@ export const fetchAdminProductDetails = async (productId: string) => {
 	return product;
 };
 
-export const updateProductAction = async (prevState: any, formData: FormData) =>
+export const updateProductAction = async (prevState: { message: string }, formData: FormData) =>
 	// : Promise<{ message: string }>
 	{
 		await getAdminUser();
@@ -157,7 +157,7 @@ export const updateProductAction = async (prevState: any, formData: FormData) =>
 	};
 
 export const updateProductImageAction = async (
-	prevState: any,
+	prevState: { message: string },
 	formData: FormData
 ) => {
 	await getAdminUser();
@@ -247,7 +247,7 @@ export const fetchUserFavorites = async () => {
 };
 
 export const createReviewAction = async (
-	prevState: any,
+	prevState: { message: string },
 	formData: FormData
 ) => {
 	const user = await getAuthUser();
@@ -345,7 +345,7 @@ export const findExistingReview = async (userId: string, productId: string) => {
 };
 
 export const fetchCartItems = async () => {
-	const { userId } = auth();
+	const { userId } = await auth();
 	const cart = await db.cart.findFirst({
 		where: {
 			clerkId: userId ?? "",
@@ -487,7 +487,7 @@ export const updateCart = async (cart: Cart) => {
 	return { cartItems, currentCart };
 };
 
-export const addToCartAction = async (prevState: any, formData: FormData) => {
+export const addToCartAction = async (prevState: { message: string }, formData: FormData) => {
 	const user = await getAuthUser();
 
 	try {
@@ -504,7 +504,7 @@ export const addToCartAction = async (prevState: any, formData: FormData) => {
 };
 
 export const removeCartItemAction = async (
-	prevState: any,
+	prevState: { message: string },
 	formData: FormData
 ) => {
 	const user = await getAuthUser();
@@ -558,7 +558,7 @@ export const updateCartItemAction = async ({
 	}
 };
 
-export const createOrderAction = async (prevState: any, formData: FormData) => {
+export const createOrderAction = async (prevState: { message: string }, formData: FormData) => {
 	const user = await getAuthUser();
 	let orderId: null | string = null;
 	let cartId: null | string = null;

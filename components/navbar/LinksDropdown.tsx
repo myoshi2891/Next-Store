@@ -11,12 +11,12 @@ import Link from "next/link";
 import { Button } from "../ui/button";
 import { links } from "@/utils/links";
 import UserIcon from "./UserIcon";
-import { SignedIn, SignedOut, SignInButton, SignUpButton } from "@clerk/nextjs";
+import { Show, SignInButton, SignUpButton } from "@clerk/nextjs";
 import SignOutLink from "./SignOutLink";
 import { auth } from "@clerk/nextjs/server";
 
-function LinksDropdown() {
-	const { userId } = auth();
+async function LinksDropdown() {
+	const { userId } = await auth();
 	const isAdmin = userId === process.env.ADMIN_USER_ID;
 	return (
 		<DropdownMenu>
@@ -27,7 +27,7 @@ function LinksDropdown() {
 				</Button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent className="w-40" align="start" sideOffset={10}>
-				<SignedOut>
+				<Show when="signed-out">
 					<DropdownMenuItem>
 						<SignInButton mode="modal">
 							<button className="w-full capitalize text-left">
@@ -43,8 +43,8 @@ function LinksDropdown() {
 							</button>
 						</SignUpButton>
 					</DropdownMenuItem>
-				</SignedOut>
-				<SignedIn>
+				</Show>
+				<Show when="signed-in">
 					{links.map((link) => {
 						if (link.label === "dashboard" && !isAdmin) return null;
 						return (
@@ -62,9 +62,7 @@ function LinksDropdown() {
 					<DropdownMenuItem>
 						<SignOutLink />
 					</DropdownMenuItem>
-				</SignedIn>
-				{/* <DropdownMenuSeparator />
-				<DropdownMenuItem>Logout</DropdownMenuItem> */}
+				</Show>
 			</DropdownMenuContent>
 		</DropdownMenu>
 	);
