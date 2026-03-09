@@ -5,7 +5,7 @@ export type CartItemWithProduct = Prisma.CartItemGetPayload<{
 }>;
 
 export type actionFunction = (
-	prevState: any,
+	prevState: { message: string },
 	formData: FormData
 ) => Promise<{ message: string }>;
 
