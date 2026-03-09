@@ -6,7 +6,7 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 
 async function CartPage() {
-	const { userId } = auth();
+	const { userId } = await auth();
 	if (!userId) redirect("/");
 	const previousCart = await fetchOrCreateCart({ userId });
 	const { currentCart, cartItems } = await updateCart(previousCart);
