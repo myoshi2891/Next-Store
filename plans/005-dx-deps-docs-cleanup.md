@@ -5,8 +5,9 @@
 > いずれかが発生したら、即座に停止して報告する。完了したら `plans/README.md` の
 > ステータス行を更新する。
 >
-> **Drift check (最初に実行)**: `git diff --stat 90f91f4..HEAD -- package.json README.md .eslintrc.json app/checkout/page.tsx utils/actions.ts`
-> 他プランによる `utils/actions.ts` の変更は想定内。それ以外の in-scope 変更は
+> **Drift check (最初に実行)**: `git diff --stat 90f91f4..HEAD -- package.json README.md .eslintrc.json eslint.config.mjs app/checkout/page.tsx utils/actions.ts`
+> 他プランによる `utils/actions.ts` の変更は想定内。`eslint.config.mjs` に既存の変更がある場合は
+> 「Current state」と比較して内容を把握してから Step 5 を実行すること。それ以外の in-scope 変更は
 > 「Current state」と比較し、不一致は STOP。
 
 ## Status
@@ -152,7 +153,15 @@ const data = await res.json();
 ### Step 5: eslint 9 + flat config への移行
 
 1. `bun remove eslint && bun add -d eslint@^9`
-2. `.eslintrc.json` を削除し、`eslint.config.mjs` を作成:
+2. eslint 9 移行では、既存の設定ファイルの状態を先に確認してから対応を選ぶ:
+   - `.eslintrc.json` が存在し `eslint.config.mjs` が**存在しない**場合:
+     `.eslintrc.json` を削除し、`eslint.config.mjs` を新規作成する。
+   - `eslint.config.mjs` が**既に存在する**場合（drift check で検出済みの想定）:
+     既存の `eslint.config.mjs` の内容を確認し、`next/core-web-vitals` の
+     flat config が正しく設定されているか検証する。不足があれば追記・修正する。
+     `.eslintrc.json` が共存していれば削除する。
+
+   いずれの場合も最終的な `eslint.config.mjs` の内容:
 
    ```js
    import nextVitals from "eslint-config-next/core-web-vitals";
