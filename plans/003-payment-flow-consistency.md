@@ -135,6 +135,23 @@ price=25 のケースは `tax=3`（2.5 → round）、data に `shipping` キー
 表示・Stripe への請求内容生成（Step 4）は影響を受けない。生成された Prisma
 マイグレーションをコミットする。
 
+**OrderItem ↔ Order 間の削除制約**: `createOrderAction` は同一トランザクション内で
+未払い Order を削除してから新しい Order を作成する（Step 3）。この削除が
+外部キー制約で失敗しないよう、以下のいずれかを選択して実装し、
+選択した方針をスキーマとマイグレーションに反映すること:
+
+- **Option A — Cascade 削除**: `OrderItem` の `orderId` フィールドに
+  `onDelete: Cascade` を設定する（`Order` を削除すると子の `OrderItem` も
+  自動削除される）。未払い注文の再注文シナリオに適合する。
+- **Option B — 明示的削除**: スキーマは変更せず、`createOrderAction` の
+  同一トランザクション内で `tx.orderItem.deleteMany({ where: { orderId } })` を
+  `tx.order.delete` より**前**に実行する。
+
+選択した方針で再注文テストを `__tests__/utils/order-actions.test.ts` に追加すること:
+既存の未払い Order（OrderItem あり）が存在する状態で `createOrderAction` を呼ぶと、
+古い Order と OrderItem が削除されて新しい Order が作成され、外部キー制約エラーが
+発生しないことを確認する。
+
 **既存 Order の取り扱い（移行方針を選択して実施すること）**:  
 スキーマ追加前に作成された Order は `cartId` も `OrderItem` も持たない。
 このような legacy Order が新しい checkout フローに到達した場合、以下のいずれかを
@@ -203,16 +220,25 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
   - **Option B — Order の処理中フラグ**: `Order` モデルに `isPending Boolean @default(false)`
     フィールドと `stripeSessionId String?` フィールドを追加し（要マイグレーション）、
     セッション作成前に以下の**アトミック**な更新で「処理中」予約を確保する:
+
     ```ts
     const reserved = await db.order.updateMany({
-      where: { id: orderId, isPending: false },
+      where: { id: orderId, isPending: false, isPaid: false },
       data: { isPending: true },
     });
     if (reserved.count !== 1) return new Response(null, { status: 409 });
     ```
-    `updateMany` は `isPending: false` の場合のみ更新するため、同時リクエストが
-    ゼロ件更新（`count === 0`）となり 409 で拒否される。この方式は
-    read-then-write ではなく単一の条件付き write であるため、競合状態が生じない。
+
+    `where` に `isPaid: false` を追加することで、決済済み（`isPaid: true`）の Order に
+    対しては予約が通らず、再チェックアウトを防止できる。`updateMany` は条件を満たす
+    場合のみ更新するため、同時リクエストがゼロ件更新（`count === 0`）となり 409 で
+    拒否される。この方式は read-then-write ではなく単一の条件付き write であるため、
+    競合状態が生じない。
+
+    **払済 Order の競合テスト**: `__tests__/api/payment-route.test.ts` に以下のテスト
+    ケースを追加すること: `isPaid: true` の Order に対して payment ルートを呼ぶと
+    409（または適切なエラーレスポンス）を返し、Stripe の `checkout.sessions.create` が
+    呼ばれず、新しい Checkout Session が作成されないことを確認する。
 
     **Stripe セッション ID の保存と再利用**: `stripe.checkout.sessions.create` が
     成功したら、返却された `session.id` を `stripeSessionId` フィールドに保存する
@@ -221,6 +247,7 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
     既存セッションを `stripe.checkout.sessions.retrieve(stripeSessionId)` で取得する。
     取得したセッションの `status` が `'open'` の場合はそのまま `clientSecret` を返す
     （重複 Stripe 呼び出しなし）。`status` が `'expired'` の場合は以下の回収手順を実行する:
+
     ```ts
     await db.order.updateMany({
       where: { id: orderId, isPending: true, isPaid: false },
@@ -229,21 +256,60 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
     // その後、通常のセッション作成フローに戻る（isPending: false に戻ったため
     // 再度 updateMany による予約が可能）
     ```
+
     この条件付き更新（`isPaid: false` を条件に含める）により、confirm ルートが
     `isPaid: true` に更新した後に誤って `isPending` を解放することを防ぐ。
 
     **Stripe セッション作成失敗時の解放**: `stripe.checkout.sessions.create` が
     例外をスローした場合、単純な `finally` による無条件解放は confirm ルートとの
-    競合を生じさせるため使用しない。代わりに catch ブロック内で条件付き更新を行う:
-    ```ts
-    catch (err) {
-      await db.order.updateMany({
-        where: { id: orderId, isPending: true, isPaid: false },
-        data: { isPending: false, stripeSessionId: null },
-      });
-      throw err; // または適切なエラーレスポンスを返す
-    }
-    ```
+    競合を生じさせるため使用しない。ネットワーク障害など不確定な失敗では
+    Stripe 側でセッションが作成済みの可能性があるため、以下のいずれかを選択する:
+
+    - **Option A（推奨）— Stripe 冪等キーを利用**: Step 4 の Option A（Stripe
+      冪等キー方式）を選択した場合、catch 内で `stripe.checkout.sessions.list` や
+      `stripe.checkout.sessions.retrieve` を呼び、同じ冪等キーで作成済みの
+      セッションが存在するか照会する。存在すれば `stripeSessionId` を保存して
+      成功レスポンスを返す（再試行で同一セッションを再利用）。存在しなければ
+      `isPending` を解放する:
+
+      ```ts
+      catch (err) {
+        // 冪等キーで既存セッションを照会して状態を再同期
+        const existing = await stripe.checkout.sessions.list(
+          { payment_intent: undefined }, // 冪等キー照会の代替手段を使うこと
+        ).catch(() => null);
+        if (existing /* 既存セッション確認済み */) {
+          await db.order.updateMany({
+            where: { id: orderId, isPending: true, isPaid: false },
+            data: { isPending: false, stripeSessionId: existing.id },
+          });
+        } else {
+          await db.order.updateMany({
+            where: { id: orderId, isPending: true, isPaid: false },
+            data: { isPending: false, stripeSessionId: null },
+          });
+        }
+        throw err;
+      }
+      ```
+
+    - **Option B — 条件付き解放のみ**: 照会を行わず、catch 内で条件付き更新のみを行う。
+      不確定な失敗時にセッションが作成済みであっても解放するリスクを許容する場合:
+
+      ```ts
+      catch (err) {
+        await db.order.updateMany({
+          where: { id: orderId, isPending: true, isPaid: false },
+          data: { isPending: false, stripeSessionId: null },
+        });
+        throw err; // または適切なエラーレスポンスを返す
+      }
+      ```
+
+    どちらの Option でも `isPaid: false` を条件に含めることで、confirm ルートが
+    `isPaid: true` に更新した後に誤って `isPending` を解放することを防ぐ。
+    **成功時の `stripeSessionId` 保存（`data: { stripeSessionId: session.id }`）と
+    既存の条件付き解放は維持すること**。
 
     **決済キャンセル・期限切れ時の回収**: Stripe Checkout Session が
     ユーザーによってキャンセルされるか `expires_at` を超過した場合、
