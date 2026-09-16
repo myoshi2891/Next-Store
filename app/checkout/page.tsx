@@ -19,6 +19,9 @@ function CheckoutContent() {
 	const cartId = searchParams.get("cartId");
 
 	const fetchClientSecret = useCallback(async () => {
+		if (!orderId || !cartId) {
+			throw new Error("orderId または cartId が指定されていません");
+		}
 		const response = await axios.post(`/api/payment`, {
 			orderId,
 			cartId,
