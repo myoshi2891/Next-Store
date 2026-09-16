@@ -47,12 +47,12 @@ describe("next.config.mjs remotePatterns", () => {
 		expect(supabase?.pathname).toMatch(/^\/storage/);
 	});
 
-	it("clerk は特定のパスのみ許可", () => {
+	it("clerk はホスト直下の単一セグメントのみ許可", () => {
 		const clerk = nextConfig.images.remotePatterns.find(
 			(p) => p.hostname === "img.clerk.com"
 		);
 		expect(clerk).toBeDefined();
-		expect(clerk?.pathname).toBeDefined();
+		expect(clerk?.pathname).toBe("/*");
 	});
 
 	it("全エントリが HTTPS を使用している", () => {

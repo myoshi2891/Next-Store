@@ -19,7 +19,9 @@ const nextConfig = {
 			{
 				protocol: "https",
 				hostname: "img.clerk.com",
-				pathname: "/**",
+				// Clerk の画像 URL はホスト直下の単一の不透明トークン
+				// （base64url エンコード、"/" を含まない）なので "/*" で十分絞れる
+				pathname: "/*",
 			},
 		],
 	},
