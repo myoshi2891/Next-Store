@@ -24,19 +24,22 @@ File naming: `plans/NNN-short-slug.md`, numbered in recommended execution order.
 > in `plans/README.md` — unless a reviewer dispatched you and told you they
 > maintain the index.
 >
-> **Drift check (run first)**: Run all three commands:
+> **Drift check (run first)**: Run all four commands:
 >
 > ```sh
 > git diff --stat <planned-at SHA>..HEAD -- <in-scope paths>
+> git diff --cached --stat -- <in-scope paths>
 > git diff --stat -- <in-scope paths>
 > git ls-files --others --exclude-standard -- <in-scope paths>
 > ```
 >
 > The first detects committed changes since the plan's base SHA, the second
-> detects a dirty worktree, and the third detects untracked in-scope files. If
-> any command reports an in-scope change, compare the "Current state" excerpts
-> against the live code before proceeding; on a mismatch, treat it as a STOP
-> condition.
+> detects staged-but-uncommitted changes, the third detects unstaged changes in
+> a dirty worktree, and the fourth detects untracked in-scope files. Together
+> they cover every place an in-scope change could be hiding: committed, staged,
+> unstaged, and untracked. If any command reports an in-scope change, compare
+> the "Current state" excerpts against the live code before proceeding; on a
+> mismatch, treat it as a STOP condition.
 
 ## Status
 
@@ -141,8 +144,8 @@ callers, then remove old path.)
 
 Machine-checkable. ALL must hold:
 
-- [ ] `pnpm typecheck` exits 0
-- [ ] `pnpm test` exits 0; new tests for <X> exist and pass
+- [ ] The Typecheck command from "Commands you will need" exits 0
+- [ ] The Tests command from "Commands you will need" exits 0; new tests for <X> exist and pass
 - [ ] `grep -rn "<old pattern>" src/` returns no matches
 - [ ] No files outside the in-scope list are modified (`git status`)
 - [ ] `plans/README.md` status row updated
