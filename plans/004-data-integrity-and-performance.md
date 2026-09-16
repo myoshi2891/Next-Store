@@ -130,15 +130,26 @@ SQL
 - `fetchOrCreateCart` を `db.cart.upsert({ where: { clerkId: userId }, create: { clerkId: userId }, update: {}, include: includeProductClause })` に置き換える。Step 1 の `@@unique([clerkId])` とこの upsert を、同一ユーザーの Cart 作成を並行リクエストでも 1 件に保つ一次対策として使う。`addToCartAction` のトランザクション化だけに依存しない。
 - `utils/actions.ts` の `updateOrCreateCartItem`（414-447）を
   `db.cartItem.upsert` に書き換える（Step 1 の `@@unique([cartId, productId])` により
-  `cartId_productId` 複合キーが where に使える）:
+  `cartId_productId` 複合キーが where に使える）。同時に、`updateOrCreateCartItem` が
+  `addToCartAction` のトランザクション外で呼ばれても動作するよう、オプショナルな
+  トランザクションクライアント引数 `client` を追加しデフォルト値を `db` とする:
 
   ```ts
-  await db.cartItem.upsert({
-      where: { cartId_productId: { cartId, productId } },
-      update: { amount: { increment: amount } },
-      create: { cartId, productId, amount },
-  });
+  async function updateOrCreateCartItem(
+    cartId: string,
+    productId: string,
+    amount: number,
+    client: Prisma.TransactionClient | typeof db = db,
+  ) {
+    await client.cartItem.upsert({
+        where: { cartId_productId: { cartId, productId } },
+        update: { amount: { increment: amount } },
+        create: { cartId, productId, amount },
+    });
+  }
   ```
+
+  既存の呼び出し元（`addToCartAction` 以外）は引数なしで呼べるため後方互換が維持される。
 
 - `toggleFavoriteAction` の create 分岐は、重複時に P2002 エラーとなるため
   try-catch で「既に追加済み」として扱うか、`upsert` に変更する。
@@ -146,6 +157,16 @@ SQL
   `db.$transaction(async (tx) => { ... }, { isolationLevel: "Serializable" })`
   で包む。Serializable 分離レベルを指定することで、異なる商品を同時追加した場合の
   競合による `numItemsInCart` / `cartTotal` / `orderTotal` の不整合を防ぐ。
+  トランザクション内では `updateOrCreateCartItem` と `updateCart` の**両方**に
+  `tx` を渡し、すべての書き込みが同一トランザクションのスコープ内で実行されるようにする:
+
+  ```ts
+  await db.$transaction(async (tx) => {
+    await updateOrCreateCartItem(cartId, productId, amount, tx);
+    await updateCart(cartId, tx);
+  }, { isolationLevel: "Serializable" });
+  ```
+
   `updateCart` が `db` を直接参照しているため、トランザクションクライアント `tx` を
   引数で受け取れるようシグネチャを拡張する（デフォルト値 `db` で後方互換を維持）。
 

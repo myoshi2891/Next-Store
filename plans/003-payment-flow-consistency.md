@@ -201,8 +201,8 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
     追加の DB ロックなしに重複作成が防止できる。冪等キーは 24 時間有効であり
     Stripe の推奨方式。
   - **Option B — Order の処理中フラグ**: `Order` モデルに `isPending Boolean @default(false)`
-    フィールドを追加し（要マイグレーション）、セッション作成前に以下の**アトミック**な
-    更新で「処理中」予約を確保する:
+    フィールドと `stripeSessionId String?` フィールドを追加し（要マイグレーション）、
+    セッション作成前に以下の**アトミック**な更新で「処理中」予約を確保する:
     ```ts
     const reserved = await db.order.updateMany({
       where: { id: orderId, isPending: false },
@@ -213,11 +213,55 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
     `updateMany` は `isPending: false` の場合のみ更新するため、同時リクエストが
     ゼロ件更新（`count === 0`）となり 409 で拒否される。この方式は
     read-then-write ではなく単一の条件付き write であるため、競合状態が生じない。
+
+    **Stripe セッション ID の保存と再利用**: `stripe.checkout.sessions.create` が
+    成功したら、返却された `session.id` を `stripeSessionId` フィールドに保存する
+    (`data: { stripeSessionId: session.id }`)。以降の同一 `orderId` への再リクエスト
+    では、`isPending: true` の 409 の代わりに `stripeSessionId` の存在を確認し、
+    既存セッションを `stripe.checkout.sessions.retrieve(stripeSessionId)` で取得する。
+    取得したセッションの `status` が `'open'` の場合はそのまま `clientSecret` を返す
+    （重複 Stripe 呼び出しなし）。`status` が `'expired'` の場合は以下の回収手順を実行する:
+    ```ts
+    await db.order.updateMany({
+      where: { id: orderId, isPending: true, isPaid: false },
+      data: { isPending: false, stripeSessionId: null },
+    });
+    // その後、通常のセッション作成フローに戻る（isPending: false に戻ったため
+    // 再度 updateMany による予約が可能）
+    ```
+    この条件付き更新（`isPaid: false` を条件に含める）により、confirm ルートが
+    `isPaid: true` に更新した後に誤って `isPending` を解放することを防ぐ。
+
+    **Stripe セッション作成失敗時の解放**: `stripe.checkout.sessions.create` が
+    例外をスローした場合、単純な `finally` による無条件解放は confirm ルートとの
+    競合を生じさせるため使用しない。代わりに catch ブロック内で条件付き更新を行う:
+    ```ts
+    catch (err) {
+      await db.order.updateMany({
+        where: { id: orderId, isPending: true, isPaid: false },
+        data: { isPending: false, stripeSessionId: null },
+      });
+      throw err; // または適切なエラーレスポンスを返す
+    }
+    ```
+
+    **決済キャンセル・期限切れ時の回収**: Stripe Checkout Session が
+    ユーザーによってキャンセルされるか `expires_at` を超過した場合、
+    Webhook（Plan 006 Step 1）で `checkout.session.expired` イベントを受け取り、
+    上記と同様の条件付き更新で `isPending: false` / `stripeSessionId: null` に戻す。
+    Plan 006 が未実装の場合は、payment ルートの既存セッション確認時に
+    `status === 'expired'` を検出した段階でインラインで回収する（上記の回収手順）。
+
     confirm ルート（Step 5）で `isPaid: true` にする際に `isPending: false` に戻す
-    (`data: { isPaid: true, isPending: false }`)。
+    (`data: { isPaid: true, isPending: false }`)。この更新は `isPending: true` を
+    条件に含めなくてよい（confirm は最終状態遷移であり、ここでの `isPending` 解放は
+    副次的なクリーンアップ）。
+
     **並行テスト**: 同一 `orderId` に対して 2 つのリクエストを同時に送るシナリオの
     ユニットテストを `__tests__/api/payment-route.test.ts` に追加し、1 つが 200、
     もう 1 つが 409 を返すこと、および Stripe が 1 度だけ呼ばれることを検証する。
+    また、Stripe 作成失敗後に `isPending` が `false` に戻ること（条件付き更新が
+    実行されること）、および期限切れセッション検出後の回収が動作することも検証する。
     **注意**: このアプローチはスキーマ変更を伴うため Plan 004 のマイグレーションと
     競合しないよう実行順を調整すること。
   - **STOP 条件**: 両アプローチとも実装困難な事情（環境制約・既存テストとの干渉）が

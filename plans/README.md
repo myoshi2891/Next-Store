@@ -18,7 +18,7 @@ STOP conditions を厳守し、完了時に自分の行のステータスを更�
 | [005](005-dx-deps-docs-cleanup.md) | DX・依存関係・ドキュメント整備 | P2 | M | — | TODO |
 | [006](006-product-direction-roadmap.md) | プロダクトロードマップ（設計スパイク束） | P3 | 項目別 | 項目ごとに個別評価（下表参照） | TODO — selected scope: none |
 
-Status values: TODO | IN PROGRESS | DONE | BLOCKED（理由 1 行）| REJECTED（理由 1 行）| NOT SELECTED（意図的に対象外 — Plan 006 の未選択スパイク項目に使用）
+Status values: TODO | IN PROGRESS | DONE | BLOCKED（理由 1 行）| REJECTED（理由 1 行）| STALE（より新しいプランまたは並行変更に追い越された — 理由 1 行）| NOT SELECTED（意図的に対象外 — Plan 006 の未選択スパイク項目に使用）
 
 ## Plan 006 item selection & status
 
@@ -62,7 +62,7 @@ DONE; unselected items do not block completion.
 - **未監査領域**: Supabase 側のバケットポリシー・RLS 設定（コードからは見えない）、
   Clerk ダッシュボード設定、実データベースのデータ品質、デプロイ環境の設定。
 - 検証ベースライン: `bun run test` → 10 files / 38 tests 全パス（~2 秒）。
-  typecheck スクリプトは未整備（005 で追加予定、それまでは `bunx tsc --noEmit`）。
+  typecheck: `bun run typecheck`（`package.json` の `typecheck: tsc --noEmit` スクリプトを使用）。後続プランの "Commands you will need" テーブルでも同スクリプトを使用すること。
 
 ## Findings considered and rejected
 
