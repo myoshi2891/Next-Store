@@ -107,6 +107,12 @@ executor's environment. Skip the section otherwise.)
 - `src/orders/legacy-api.ts` — deprecated path, scheduled for deletion;
   changing it wastes effort and risks the v1 clients still pinned to it.
 - Any change to the public response shape — clients depend on it.
+- `plans/README.md` is not part of this in-scope list and never counts against
+  the "no files outside in-scope list modified" done-criterion check — updating
+  it is governed solely by the executor-instructions exception above (a
+  reviewer/dispatcher who maintains the index tells the executor to skip it;
+  see `closing-the-loop.md`'s `execute` dispatch preamble). Keep this exception
+  applied identically wherever the plan checks scope or done criteria.
 
 ## Git workflow
 
@@ -148,7 +154,9 @@ Machine-checkable. ALL must hold:
 - [ ] The Tests command from "Commands you will need" exits 0; new tests for <X> exist and pass
 - [ ] `grep -rn "<old pattern>" src/` returns no matches
 - [ ] No files outside the in-scope list are modified (`git status`)
-- [ ] `plans/README.md` status row updated
+- [ ] `plans/README.md` status row updated — unless a reviewer/dispatcher told
+  you they maintain the index (see the executor instructions above and the
+  matching Scope note), in which case skip this and leave it to them
 
 ## STOP conditions
 
