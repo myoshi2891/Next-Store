@@ -127,7 +127,18 @@ SQL
 
 ### Step 4: check-then-act を upsert に置換
 
-- `fetchOrCreateCart` を `db.cart.upsert({ where: { clerkId: userId }, create: { clerkId: userId }, update: {}, include: includeProductClause })` に置き換える。Step 1 の `@@unique([clerkId])` とこの upsert を、同一ユーザーの Cart 作成を並行リクエストでも 1 件に保つ一次対策として使う。`addToCartAction` のトランザクション化だけに依存しない。
+- `fetchOrCreateCart` の `errorOnFailure` 契約を**維持**しながら並行安全にする:
+  - `errorOnFailure: true`（または省略時のデフォルト）の呼び出しでは、既存の
+    `findFirst` → 未存在時に例外スロー、という既存の分岐をそのまま残す
+    （Cart を新規作成しない経路）。
+  - `errorOnFailure: false`（または明示的に作成を許可する呼び出し）では、
+    `db.cart.upsert({ where: { clerkId: userId }, create: { clerkId: userId }, update: {}, include: includeProductClause })`
+    に置き換える。Step 1 の `@@unique([clerkId])` と組み合わせることで、
+    同一ユーザーの Cart 作成を並行リクエストでも 1 件に保つ一次対策になる。
+  - `addToCartAction` は `fetchOrCreateCart({ userId: user.id })` と呼んでいる
+    （`errorOnFailure` 未指定）。この呼び出しを **`errorOnFailure: false`** へ
+    変更するか、`createOrderAction` の注文作成フローが空の Cart を作成しないことを
+    確認してから変更する。`addToCartAction` のトランザクション化だけに依存しない。
 - `utils/actions.ts` の `updateOrCreateCartItem`（414-447）を
   `db.cartItem.upsert` に書き換える（Step 1 の `@@unique([cartId, productId])` により
   `cartId_productId` 複合キーが where に使える）。同時に、`updateOrCreateCartItem` が
@@ -162,10 +173,16 @@ SQL
 
   ```ts
   await db.$transaction(async (tx) => {
+    const cart = await tx.cart.findFirst({ where: { clerkId: userId }, include: includeProductClause });
+    if (!cart) throw new Error("Cart not found");
     await updateOrCreateCartItem(cartId, productId, amount, tx);
-    await updateCart(cartId, tx);
+    await updateCart(cart, tx);
   }, { isolationLevel: "Serializable" });
   ```
+
+  `cart` オブジェクトを `updateCart` に渡すことで既存の `updateCart(cart: Cart)` シグネチャと
+  整合する。`updateCart(cartId, tx)` のように `cartId` を直接渡す形は、`updateCart` の
+  シグネチャとすべての呼び出し元を意図的に変更しない限り使用しないこと。
 
   `updateCart` が `db` を直接参照しているため、トランザクションクライアント `tx` を
   引数で受け取れるようシグネチャを拡張する（デフォルト値 `db` で後方互換を維持）。
@@ -177,11 +194,18 @@ SQL
 
   **Serializable を利用できない環境向けのフォールバック**:
   Supabase PgBouncer のトランザクションプーリングモード等で Serializable が
-  使えない場合は、`updateCart` 内で `db.cart.update({ where: { id: cartId, version: currentVersion }, data: { version: { increment: 1 }, ...sums } })` の
-  楽観的ロック（Cart にバージョンカラムを追加）を行い、
+  使えない場合は、`updateCart` 内で
+  `db.cart.update({ where: { id: cart.id, version: currentVersion }, data: { version: { increment: 1 }, ...sums } })`
+  の楽観的ロック（Cart に `version Int @default(0)` バージョンカラムを追加）を行い、
   `count === 0`（別トランザクションが先に更新済み）なら `P2034` と同様に再試行する。
-  バージョンカラム追加には Plan 004 Step 1/3 のマイグレーションと同じ
-  `bunx prisma migrate dev` を使うこと（Step 1 と同一マイグレーションファイルにまとめても可）。
+
+  **Cart.version マイグレーション要件**: このフォールバックを選択する場合は
+  `Cart` モデルへの `version Int @default(0)` カラム追加を
+  **本 Plan 004 の Scope・Step 1・Done criteria** に含め、Step 3 のマイグレーション
+  （`bunx prisma migrate dev`）と同一の実行で適用すること。Serializable が
+  利用できない環境でこのカラムがない場合は楽観的ロックを実装できないため STOP し、
+  `version` カラムのマイグレーションを先に行うか、接続プール設定を変更して
+  Serializable を有効化する手順を確認してから再開すること。
 
   **STOP 条件**: Supabase 環境で Serializable が実際に使えるかどうかは
   実行前に `bunx prisma db execute --stdin <<'SQL'
