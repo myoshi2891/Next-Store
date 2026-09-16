@@ -42,12 +42,14 @@
 ## Current state
 
 - `utils/actions.ts:449-488` — `updateCart`:
+
   ```ts
   const tax = cart.taxRate * cartTotal;          // :470 Float になり得る
   const shipping = cartTotal ? cart.shipping : 0; // :471
   const orderTotal = cartTotal + tax + shipping;  // :472
   // db.cart.update の data: { numItemsInCart, cartTotal, tax, /* shipping コメントアウト :482 */ orderTotal }
   ```
+
   `prisma/schema.prisma:56-68` — `Cart.tax` / `Cart.orderTotal` / `Cart.shipping` は
   すべて `Int`、`taxRate` のみ `Float @default(0.1)`。
 - `utils/actions.ts:561-597` — `createOrderAction`: `fetchOrCreateCart` の戻り値
@@ -56,9 +58,11 @@
 - `prisma/schema.prisma:56-92` — `Cart` と `Order` の間に関係または Order 側の
   `cartId` がなく、作成時のカートを永続的に結び付けられない。
 - `app/api/payment/route.ts:39-51` — line_items は商品のみ:
+
   ```ts
   unit_amount: cartItem.product.price * 100, // price in cents
   ```
+
   tax / shipping の line item なし。`origin` ヘッダ（:8）は null チェックなしで
   `return_url` に埋め込まれる。`orderId` と `cartId` の対応も未検証。
 - `app/api/confirm/route.ts:11-30` — `session.status === "complete"` で
@@ -133,16 +137,23 @@ price=25 のケースは `tax=3`（2.5 → round）、data に `shipping` キー
 - `:587` を `user.emailAddresses[0]?.emailAddress` にし、undefined の場合は
   `throw new Error("No email address found for user")`（renderError 経由で
   ユーザーにメッセージが返る）。
+- Order 作成時に、再計算した `currentCart.cartItems` の各行から `OrderItem`
+  （Step 3 でスキーマに追加）を同一トランザクションで作成する。各 `OrderItem` には
+  `productId`、`quantity`（cartItem の `amount`）、`unitPrice`（作成時点の
+  `product.price`）を保存する。これが注文当時の商品構成・単価のスナップショットになり、
+  以後カートや商品価格が変わっても注文内容は変化しない。
 
 **Verify**: `bunx vitest run __tests__/utils/order-actions.test.ts` → 全パス
 （Step 内で期待値を新仕様に更新すること）
 
 ### Step 3: Stripe セッションの請求額を orderTotal に一致させる
 
-`prisma/schema.prisma` に Cart-to-Order 関係を追加し、`createOrderAction` で作成する
-Order に現在の Cart を接続して `cartId` を永続化する。confirm ルートが Cart を削除しても
-注文履歴を削除しないよう、既存注文に対応できる optional relation と `onDelete: SetNull`
-を使う。生成された Prisma マイグレーションをコミットする。
+`prisma/schema.prisma` に `OrderItem` モデル（`productId`、`orderId`、`quantity`、
+`unitPrice` を保持、`Product`/`Order` への外部キー）と Cart-to-Order 関係を追加し、
+`createOrderAction` で作成する Order に現在の Cart を接続して `cartId` を永続化する。
+confirm ルートが Cart を削除しても注文履歴を削除しないよう、既存注文に対応できる
+optional relation と `onDelete: SetNull` を使う。生成された Prisma マイグレーションを
+コミットする。
 
 `app/api/payment/route.ts`:
 - `orderId` と `cartId` を取得した後、Order が永続化した `cartId` と取得した Cart の id
@@ -152,18 +163,26 @@ Order に現在の Cart を接続して `cartId` を永続化する。confirm �
   origin（例: `APP_URL`）を `new URL` で検証し、許可した scheme/host のみを使って
   `return_url` を組み立てる。設定が欠落・不正なら 400 を返す。null Origin の 400
   ハンドリングは維持するが、任意の Origin を受け入れる根拠にはしない。
-- line_items に tax と shipping の項目を追加する（cart の保存値を使用）:
+- line_items の商品行を、`cart.cartItems`（現在のカート内容・現在の商品価格）ではなく
+  Order に紐づく `OrderItem`（Step 2 で保存した注文時点のスナップショット）から生成する。
+  こうすることで、注文作成後にカートの中身や商品価格が変わっても、Stripe への請求内容が
+  注文時点のまま保たれる。
+- tax と shipping の line item は、Cart の現在値ではなく Order 自身が保持する
+  `order.tax` / `order.shipping`（`Order` モデルに既存のフィールド。作成時に
+  Step 2 で永続化済み）を使う:
+
   ```ts
-  if (cart.tax > 0) line_items.push({ quantity: 1, price_data: {
+  if (order.tax > 0) line_items.push({ quantity: 1, price_data: {
       currency: "usd", product_data: { name: "Tax" },
-      unit_amount: cart.tax * 100 } });
-  if (cart.shipping > 0 && cart.cartItems.length > 0) line_items.push({ /* 同様に Shipping */ });
+      unit_amount: order.tax * 100 } });
+  if (order.shipping > 0) line_items.push({ /* 同様に Shipping、order.shipping を使用 */ });
   ```
-  ※ `cart.shipping` はスキーマ上「カートが空でなければ 5（ドル）」の固定送料。
-  Step 1 で shipping が永続化されるようになったため cart の保存値を使ってよい。
+
 - セッション作成前にアサーションを追加: line_items の合計
   （`sum(unit_amount * quantity)`）が `order.orderTotal * 100` と一致しない場合は
-  500 を返し `console.error` する（金額乖離の早期検知）。
+  500 を返し `console.error` する（金額乖離の早期検知）。OrderItem/order.tax/
+  order.shipping から組み立てている限り、この合計は常に `order.orderTotal` と
+  一致するはずであり、不一致はスナップショットの取り違えを示す。
 
 Plan 002 の `payment-route.test.ts` の期待値を「line_items 合計 = orderTotal × 100」に更新し、
 Order と Cart の関係が一致しない 400、無効/未許可の origin で Stripe が呼ばれないことを
@@ -180,13 +199,22 @@ Order と Cart の関係が一致しない 400、無効/未許可の origin で 
 - Stripe セッション取得後、**database 更新より前**に `session.metadata.orderId` と
   `session.metadata.cartId` がともに空でない文字列であることを runtime で検証する。
   欠落・空文字列・文字列以外なら 400 を返し、order 更新も cart 削除も行わない。
+- `auth()`（`@clerk/nextjs/server`）で `userId` を取得する。未認証なら 401 を返す。
+  `orderId`/`cartId` の検証後、database 更新より前に対応する Order と Cart を
+  `db.order.findUnique` / `db.cart.findUnique` で読み込み、両方が存在し、かつ
+  `order.clerkId === userId && cart.clerkId === userId` であることを確認する。
+  一方でも不一致・存在しない場合は 403 を返し、`db.order.update` と `db.cart.delete`
+  のいずれも実行しない（Plan 001 で payment ルートに追加する所有権チェックと同じ
+  パターン — セッション ID を知っている第三者が他ユーザーの注文/カートを操作できない
+  ようにする）。
 - `db.cart.delete` を上記 if の**内側**に移動する（未完了セッションでカートを
   消さない）。cart が既に削除済み（リロード等での再訪）の場合に Prisma の
   P2025 エラーで 500 にならないよう、`deleteMany({ where: { id: cartId } })` に
   変更するか try-catch で P2025 を無視する（冪等化）。
 
 Plan 002 の `confirm-route.test.ts` の期待値を更新:
-未完了セッション、および無効な metadata では order 更新も cart 削除も行われない。
+未完了セッション、無効な metadata、および `orderId`/`cartId` の所有者が呼び出しユーザーと
+一致しない場合では order 更新も cart 削除も行われない。
 
 **Verify**: `bunx vitest run __tests__/api/confirm-route.test.ts` → 全パス
 
@@ -216,7 +244,9 @@ CLAUDE.md の「価格は **セント単位の整数**（`Int`）で保存」を
 - 追加ケース: line_items 合計と orderTotal の一致アサーション、Order と Cart の関係が
   不一致なら Stripe を呼ばず 400、未許可 origin なら Stripe を呼ばないこと（Step 3）。
 - 追加ケース: confirm の冪等性（同一 session_id で 2 回呼んでもエラーにならない）、
-  metadata の orderId/cartId が欠落・空・非文字列なら 400 で DB を更新しないこと（Step 4）。
+  metadata の orderId/cartId が欠落・空・非文字列なら 400 で DB を更新しないこと、
+  未認証なら 401、Order/Cart の所有者が呼び出しユーザーと一致しなければ 403 を返し
+  DB を更新しないこと（Step 4）。
 
 ## Done criteria
 
@@ -226,7 +256,12 @@ CLAUDE.md の「価格は **セント単位の整数**（`Int`）で保存」を
 - [ ] `grep -n "payment_status" app/api/confirm/route.ts` がヒットする
 - [ ] `grep -c "shipping" app/api/payment/route.ts` が 1 以上
 - [ ] payment ルートは Order の永続化済み cartId とリクエスト cartId の一致を確認してから Stripe を呼ぶ
+- [ ] payment ルートの line_items は `OrderItem`（注文時スナップショット）と
+      `order.tax` / `order.shipping` から生成され、`cart.cartItems` の現在価格を
+      直接使っていない
 - [ ] confirm ルートは metadata の orderId/cartId を DB 更新前に検証し、無効なら 400 を返す
+- [ ] confirm ルートは `auth()` の userId と Order/Cart の clerkId を DB 更新前に照合し、
+      未認証なら 401、不一致なら 403 を返して `db.order.update`/`db.cart.delete` を実行しない
 - [ ] `git status` で in-scope 外のファイルに変更がない
 - [ ] `plans/README.md` のステータス行を更新済み
 
