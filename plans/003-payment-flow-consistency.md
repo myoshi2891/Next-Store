@@ -139,20 +139,28 @@ price=25 のケースは `tax=3`（2.5 → round）、data に `shipping` キー
   ユーザーにメッセージが返る）。
 - Order 作成時に、再計算した `currentCart.cartItems` の各行から `OrderItem`
   （Step 3 でスキーマに追加）を同一トランザクションで作成する。各 `OrderItem` には
-  `productId`、`quantity`（cartItem の `amount`）、`unitPrice`（作成時点の
-  `product.price`）を保存する。これが注文当時の商品構成・単価のスナップショットになり、
-  以後カートや商品価格が変わっても注文内容は変化しない。
+  `productId`、`productName`（作成時点の `product.name`）、`quantity`（cartItem の
+  `amount`）、`unitPrice`（作成時点の `product.price`）を保存する。これが注文当時の
+  商品構成・単価・商品名のスナップショットになり、以後カートや商品価格・商品名が
+  変わっても注文内容は変化しない。`app/api/payment/route.ts:45` は現在
+  `cartItem.product.name` を Stripe の `product_data.name` にそのまま使っているが、
+  Step 3 でこれを `OrderItem.productName` から生成するように置き換える（商品が削除・
+  改名されても注文当時の表示名が保たれる）。
 
 **Verify**: `bunx vitest run __tests__/utils/order-actions.test.ts` → 全パス
 （Step 内で期待値を新仕様に更新すること）
 
 ### Step 3: Stripe セッションの請求額を orderTotal に一致させる
 
-`prisma/schema.prisma` に `OrderItem` モデル（`productId`、`orderId`、`quantity`、
-`unitPrice` を保持、`Product`/`Order` への外部キー）と Cart-to-Order 関係を追加し、
-`createOrderAction` で作成する Order に現在の Cart を接続して `cartId` を永続化する。
-confirm ルートが Cart を削除しても注文履歴を削除しないよう、既存注文に対応できる
-optional relation と `onDelete: SetNull` を使う。生成された Prisma マイグレーションを
+`prisma/schema.prisma` に `OrderItem` モデル（`productId`、`productName`、`orderId`、
+`quantity`、`unitPrice` を保持、`Product`/`Order` への外部キー）と Cart-to-Order 関係を
+追加し、`createOrderAction` で作成する Order に現在の Cart を接続して `cartId` を
+永続化する。confirm ルートが Cart を削除しても注文履歴を削除しないよう、既存注文に
+対応できる optional relation と `onDelete: SetNull` を使う。`OrderItem.productId` の
+`Product` への外部キーも同様に `onDelete: SetNull`（optional relation）にする。
+`productName`/`unitPrice` が作成時点のスナップショットとして `OrderItem` 自身に
+保存されるため、参照先の `Product` が削除されても注文履歴の表示・Stripe への
+請求内容生成（Step 3）は影響を受けない。生成された Prisma マイグレーションを
 コミットする。
 
 `app/api/payment/route.ts`:
@@ -165,8 +173,10 @@ optional relation と `onDelete: SetNull` を使う。生成された Prisma マ
   ハンドリングは維持するが、任意の Origin を受け入れる根拠にはしない。
 - line_items の商品行を、`cart.cartItems`（現在のカート内容・現在の商品価格）ではなく
   Order に紐づく `OrderItem`（Step 2 で保存した注文時点のスナップショット）から生成する。
-  こうすることで、注文作成後にカートの中身や商品価格が変わっても、Stripe への請求内容が
-  注文時点のまま保たれる。
+  `product_data.name` には `orderItem.productName` を使い、`Product` テーブルを
+  再読込しない（現在の `app/api/payment/route.ts:45` の `cartItem.product.name` 参照を
+  置き換える）。こうすることで、注文作成後にカートの中身・商品価格・商品名が変わっても、
+  また商品が削除されても、Stripe への請求内容が注文時点のまま保たれる。
 - tax と shipping の line item は、Cart の現在値ではなく Order 自身が保持する
   `order.tax` / `order.shipping`（`Order` モデルに既存のフィールド。作成時に
   Step 2 で永続化済み）を使う:

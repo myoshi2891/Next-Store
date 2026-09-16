@@ -161,7 +161,10 @@ Clerk は `vi.mock("@clerk/nextjs/server")` で `auth`/`currentUser` をモッ�
 
 `__tests__/utils/schemas.test.ts` を作成:
 
-- `imageSchema`: 1MB 超のファイルで失敗、`image/*` 以外の type で失敗、正常ファイルで成功
+- `imageSchema`: 1MB 超のファイルで失敗、Plan 001 が導入する許可リスト
+  （`image/jpeg`, `image/png`, `image/webp`, `image/gif`）の4種類のみ成功、
+  それ以外の `image/*`（例: `image/svg+xml`, `image/avif`）および非画像 MIME は
+  すべて拒否
 - `productSchema`: price に負数・小数で失敗、description 10 語未満で失敗
 - `validateWithZodSchema`: 失敗時にメッセージが結合された Error を throw
 

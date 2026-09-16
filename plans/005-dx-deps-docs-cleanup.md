@@ -49,9 +49,12 @@
 - コード中で参照される環境変数（`.env.example` に列挙すべきキー名）:
   `DATABASE_URL`, `DIRECT_URL`, `SUPABASE_URL`, `SUPABASE_KEY`, `ADMIN_USER_ID`,
   `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`,
-  `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`
+  `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `APP_URL`
   （Clerk 系は `@clerk/nextjs` が規約名で読む。実際に使われているキーは
-  CLAUDE.md「環境変数」セクションも参照）。
+  CLAUDE.md「環境変数」セクションも参照。`APP_URL` は Plan 003 が
+  `app/api/payment/route.ts` の return URL 生成で参照する canonical origin ―
+  Plan 003 のドリフトチェック対象パスに含まれないため、この Plan 005 の
+  `.env.example` 作成が唯一の記載場所になる）。
 - デッドコード / デバッグ残骸:
   - `utils/actions.ts:82` — `console.log(validatedFile)`
   - `utils/actions.ts:77` — コメントアウトされた旧検証コード
@@ -148,18 +151,23 @@ const data = await res.json();
 2. `.eslintrc.json` を削除し、`eslint.config.mjs` を作成:
 
    ```js
-   import { FlatCompat } from "@eslint/eslintrc";
-   const compat = new FlatCompat({ baseDirectory: import.meta.dirname });
-   export default [...compat.extends("next/core-web-vitals")];
+   import nextVitals from "eslint-config-next/core-web-vitals";
+
+   export default [...nextVitals];
    ```
 
-   （`eslint-config-next@16` が flat 対応エクスポートを提供している場合は
-   そちらを直接 import する形を優先。`@eslint/eslintrc` が必要なら devDep に追加）
+   `@eslint/eslintrc` の `FlatCompat` は使わない — `eslint-config-next@16` は
+   `./core-web-vitals` エクスポート（`node_modules/eslint-config-next/package.json`
+   の `exports` を参照）でネイティブ flat config を提供しているため不要。
 3. `bun run lint` を実行し、新たに報告されるエラーを確認する。
    **新規エラーが 10 件を超える場合は修正せず STOP して一覧を報告**
    （ルール調整の判断が必要）。10 件以下の機械的修正（未使用変数等）は行ってよい。
+4. `npx eslint --print-config app/layout.tsx` および任意の既存 `.tsx` ファイル
+   （例: `components/navbar/Navbar.tsx`）に対して実行し、TypeScript/TSX 用の
+   パーサー・ルールが解決されていることを確認する（エラー終了は STOP）。
 
-**Verify**: `bun run lint` → exit 0
+**Verify**: `bun run lint` → exit 0、上記 `eslint --print-config` の2コマンドが
+いずれもエラーなく設定 JSON を出力する
 
 ### Step 6: デッドコード・デバッグログの除去
 

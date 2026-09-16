@@ -16,7 +16,7 @@ STOP conditions を厳守し、完了時に自分の行のステータスを更�
 | [003](003-payment-flow-consistency.md) | 決済フローの金額整合性と状態遷移の修正 | P1 | M | 002 | TODO |
 | [004](004-data-integrity-and-performance.md) | DB 整合性制約とホットパス性能改善 | P2 | M | 002, 003 | TODO |
 | [005](005-dx-deps-docs-cleanup.md) | DX・依存関係・ドキュメント整備 | P2 | M | — | TODO |
-| [006](006-product-direction-roadmap.md) | プロダクトロードマップ（設計スパイク束） | P3 | 項目別 | 6-1 のみ 003 | TODO — selected scope: none |
+| [006](006-product-direction-roadmap.md) | プロダクトロードマップ（設計スパイク束） | P3 | 項目別 | 項目ごとに個別評価（下表参照） | TODO — selected scope: none |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED（理由 1 行）| REJECTED（理由 1 行）
 
@@ -38,6 +38,10 @@ DONE; unselected items do not block completion.
 
 ## Dependency notes
 
+- **006 は dispatch 対象として直接実行しない**: 006 は複数スパイクの束であり、
+  依存関係は選択された項目ごとに異なる（例: 6-1 は 003 完了後）。`execute` する際は
+  選択済みの項目に対応する個別プラン（1xx 番台）が別途作成されていることを前提とし、
+  006 自体を executor に渡さない。
 - **003 は 002 が前提**: 金額計算を変更するため、先に characterization テストで
   現挙動を固定しないと修正の正しさを機械検証できない。
 - **004 は 003 の後**: 同じ `utils/actions.ts` の `updateCart` 周辺を触るため
