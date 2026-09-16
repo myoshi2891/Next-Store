@@ -65,11 +65,30 @@ describe("React 19 互換性チェック", () => {
 			resolve(__dirname, "../../app/checkout/page.tsx"),
 			"utf-8"
 		);
-		if (checkoutPage.includes("useSearchParams")) {
-			expect(
-				checkoutPage,
-				"useSearchParams を使うページには Suspense が必要です"
-			).toContain("Suspense");
-		}
+		if (!checkoutPage.includes("useSearchParams")) return;
+
+		// CheckoutContent（useSearchParams を呼ぶコンポーネント）が
+		// Suspense の直接子として JSX 上に配置されていることを検証する。
+		// 単純な文字列存在チェックではなく構造を検証するため、
+		// <Suspense ...> の開始タグより後に <CheckoutContent が現れ、
+		// かつその間に </Suspense> が存在しないことを確認する。
+		// CheckoutContent を Suspense 外に移動するとこのアサーションが失敗する。
+		const suspenseStart = checkoutPage.indexOf("<Suspense");
+		const suspenseEnd = checkoutPage.indexOf("</Suspense>");
+		expect(
+			suspenseStart,
+			"Suspense タグが見つかりません"
+		).toBeGreaterThanOrEqual(0);
+		expect(
+			suspenseEnd,
+			"</Suspense> 閉じタグが見つかりません"
+		).toBeGreaterThanOrEqual(0);
+
+		const insideSuspense = checkoutPage.slice(suspenseStart, suspenseEnd);
+		expect(
+			insideSuspense,
+			"CheckoutContent が Suspense boundary の内側に配置されていません — " +
+				"useSearchParams() を呼ぶコンポーネントは必ず <Suspense> 内に置いてください"
+		).toContain("<CheckoutContent");
 	});
 });
