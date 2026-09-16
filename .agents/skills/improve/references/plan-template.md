@@ -153,7 +153,11 @@ Machine-checkable. ALL must hold:
 - [ ] The Typecheck command from "Commands you will need" exits 0
 - [ ] The Tests command from "Commands you will need" exits 0; new tests for <X> exist and pass
 - [ ] `grep -rn "<old pattern>" src/` returns no matches
-- [ ] No files outside the in-scope list are modified (`git status`)
+- [ ] No files outside the in-scope list are modified — run all four commands and confirm each reports no in-scope path outside the list:
+  - `git diff --stat <planned-at SHA>..HEAD` (committed since plan's base)
+  - `git diff --cached --stat` (staged)
+  - `git diff --stat` (unstaged)
+  - `git ls-files --others --exclude-standard` (untracked)
 - [ ] `plans/README.md` status row updated — unless a reviewer/dispatcher told
   you they maintain the index (see the executor instructions above and the
   matching Scope note), in which case skip this and leave it to them
@@ -198,7 +202,7 @@ honor its STOP conditions, and update your row when done.
 | 001  | ...   | P1       | S      | —          | TODO   |
 | 002  | ...   | P1       | M      | 001        | TODO   |
 
-Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with one-line rationale — finding fixed independently or approach abandoned)
+Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with one-line rationale — finding fixed independently or approach abandoned) | STALE (overtaken by a newer plan or concurrent change — add one-line reason)
 
 ## Dependency notes
 

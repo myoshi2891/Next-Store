@@ -79,7 +79,7 @@ Present **direction findings separately**, after the table — they're options f
 
 Then ask which findings to turn into plans (default suggestion: the top 3–5 plus anything they flag). Also surface **dependency ordering** — e.g. "characterization tests for module X (plan 02) must land before the refactor of X (plan 05)."
 
-Wait for the selection. Do not write 30 plans nobody asked for. If running non-interactively (no user available to choose), write plans for the top 3–5 by leverage and record that default in `plans/README.md`.
+Wait for the selection. Do not write 30 plans nobody asked for. If running non-interactively (no user available to choose), write plans for the top 3–5 by leverage and record that default in `<chosen-dir>/README.md`.
 
 ### Phase 4 — Write the plans
 
@@ -94,7 +94,7 @@ For each selected finding, write one plan file using the template in [references
 
 **Excerpts come from your own reads, never from a subagent's report.** Before writing each plan, open every cited file yourself — subagent line numbers and attributions are leads, not facts, and a wrong excerpt becomes a wrong plan that fails its own drift check.
 
-Before writing anything: record `git rev-parse --short HEAD` — every plan stamps the commit it was written against (the executor uses it for drift detection). Decide on `<chosen-dir>` now and use it consistently throughout this session: if `plans/` already exists from a previous advisor run, **reconcile, don't duplicate** — read `<chosen-dir>/README.md`, keep numbering monotonic, skip findings already planned or listed as rejected, and mark superseded plans stale in the index. If `plans/` exists for some unrelated purpose, set `<chosen-dir>` to `advisor-plans/` and say so. Every subsequent reference to `plans/README.md`, plan file paths, and index updates in this skill and its references uses `<chosen-dir>` in place of `plans/`.
+Before writing anything: record `git rev-parse --short HEAD` — every plan stamps the commit it was written against (the executor uses it for drift detection). Decide on `<chosen-dir>` now and use it consistently throughout this session: if `plans/` already exists from a previous advisor run, **reconcile, don't duplicate** — read `<chosen-dir>/README.md`, keep numbering monotonic, skip findings already planned or listed as rejected, and mark superseded plans **STALE** in the index (STALE means the plan was overtaken by a newer plan or concurrent change; it is defined as an allowed status value in `<chosen-dir>/README.md` and `references/plan-template.md`). If `plans/` exists for some unrelated purpose, set `<chosen-dir>` to `advisor-plans/` and say so. Every subsequent reference to `<chosen-dir>/README.md`, plan file paths, and index updates in this skill and its references uses `<chosen-dir>` in place of `plans/`.
 
 Write each plan **for the weakest plausible executor**. That means:
 
