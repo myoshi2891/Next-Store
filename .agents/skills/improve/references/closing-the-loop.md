@@ -70,9 +70,9 @@ Running verification commands inside the executor's worktree is fine — it's is
 
 ---
 
-## `reconcile` — keep `plans/` alive
+## `reconcile` — keep `<chosen-dir>/` alive
 
-Process what happened since the last session. Read `plans/README.md` and every plan file, then per status:
+Process what happened since the last session. Read `<chosen-dir>/README.md` and every plan file, then per status:
 
 - **DONE** — spot-check that the done criteria still hold on the current HEAD (cheap ones only). Mark verified in the index. Don't delete plan files — they're the record.
 - **BLOCKED** — read the reason. Investigate the underlying obstacle in the codebase. Either rewrite the plan around it (new number if the approach changed fundamentally, in-place refresh otherwise) or mark REJECTED with one line of rationale.

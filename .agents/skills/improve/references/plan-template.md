@@ -21,7 +21,7 @@ File naming: `<chosen-dir>/NNN-short-slug.md`, numbered in recommended execution
 > verification command and confirm the expected result before moving to the
 > next step. If anything in the "STOP conditions" section occurs, stop and
 > report — do not improvise. When done, update the status row for this plan
-> in `plans/README.md` — unless a reviewer dispatched you and told you they
+> in `<chosen-dir>/README.md` — unless a reviewer dispatched you and told you they
 > maintain the index.
 >
 > **Drift check (run first)**: Run all four commands:
@@ -107,7 +107,7 @@ executor's environment. Skip the section otherwise.)
 - `src/orders/legacy-api.ts` — deprecated path, scheduled for deletion;
   changing it wastes effort and risks the v1 clients still pinned to it.
 - Any change to the public response shape — clients depend on it.
-- `plans/README.md` is not part of this in-scope list and never counts against
+- `<chosen-dir>/README.md` is not part of this in-scope list and never counts against
   the "no files outside in-scope list modified" done-criterion check — updating
   it is governed solely by the executor-instructions exception above (a
   reviewer/dispatcher who maintains the index tells the executor to skip it;
