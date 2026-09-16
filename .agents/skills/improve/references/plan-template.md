@@ -8,7 +8,7 @@ Three properties make a plan executable by a weaker model:
 2. **Verification gates** — every step ends with a command and its expected result. The executor never has to *judge* whether it succeeded.
 3. **Hard boundaries and escape hatches** — explicit out-of-scope list, and "STOP and report" conditions instead of letting the model improvise when reality doesn't match the plan.
 
-File naming: `plans/NNN-short-slug.md`, numbered in recommended execution order.
+File naming: `<chosen-dir>/NNN-short-slug.md`, numbered in recommended execution order. `<chosen-dir>` is `plans/` unless that directory already exists for an unrelated purpose, in which case use `advisor-plans/` (see Hard Rule 1 in SKILL.md). Use the same directory for the index file (`<chosen-dir>/README.md`) and all paths you pass to `execute` and `reconcile`.
 
 ---
 
