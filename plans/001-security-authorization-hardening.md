@@ -161,6 +161,13 @@ if (order.clerkId !== userId || cart.clerkId !== userId) {
 
 `utils/schemas.ts:54-68` — `acceptedFileTypes` を具体的な MIME の許可リストに変更:
 `["image/jpeg", "image/png", "image/webp", "image/gif"]`、判定を `includes` に変更する。
+`file.type` はクライアントが送る自己申告値であり偽装可能なため、これだけでは不十分。
+`validateImageFile`（またはアップロード直前の共有境界）に、ファイル内容そのものを
+検証するチェックを追加する: (1) 先頭バイトが許可した画像形式のマジックナンバーと
+一致すること、(2) 画像として実際にデコードできること（例: `sharp` や `image-size`
+などで寸法取得を試み、失敗したら拒否）。この検証は `uploadImage` を呼ぶすべての
+呼び出し元（`utils/actions.ts:84`, `utils/actions.ts:172`）が通る共有スキーマ
+（`validateImageFile`）内に実装し、個別の呼び出し元での重複実装を避ける。
 
 **Verify**: `bunx tsc --noEmit` → exit 0
 

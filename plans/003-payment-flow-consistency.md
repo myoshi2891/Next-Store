@@ -122,7 +122,22 @@ price=25 のケースは `tax=3`（2.5 → round）、data に `shipping` キー
 
 **Verify**: `bunx vitest run __tests__/utils/cart-calculations.test.ts` → 全パス
 
-### Step 2: createOrderAction で合計を再計算する
+### Step 2: OrderItem スキーマを追加しマイグレーションを生成する
+
+`prisma/schema.prisma` に `OrderItem` モデル（`productId`、`productName`、`orderId`、
+`quantity`、`unitPrice` を保持、`Product`/`Order` への外部キー）と Cart-to-Order 関係
+（`Order.cartId`）を追加する。この `cartId` への接続自体は Step 3 の
+`createOrderAction` で行う。confirm ルートが Cart を削除しても注文履歴を削除しない
+よう、既存注文に対応できる optional relation と `onDelete: SetNull` を使う。
+`OrderItem.productId` の `Product` への外部キーも同様に `onDelete: SetNull`
+（optional relation）にする。`productName`/`unitPrice` が作成時点のスナップショット
+として `OrderItem` 自身に保存されるため、参照先の `Product` が削除されても注文履歴の
+表示・Stripe への請求内容生成（Step 4）は影響を受けない。生成された Prisma
+マイグレーションをコミットする。
+
+**Verify**: `bunx prisma generate` → exit 0（`OrderItem` 型が生成されること）
+
+### Step 3: createOrderAction で合計を再計算する
 
 `utils/actions.ts:561-597`:
 - カートの再計算、合計の永続化、未払い注文の削除、Order 作成を同一の
@@ -130,6 +145,8 @@ price=25 のケースは `tax=3`（2.5 → round）、data に `shipping` キー
   ようにし、その `tx` で最新の cartItems/product を再読込して計算・更新する。作成する
   Order はその `currentCart` スナップショットの `numItemsInCart`、`orderTotal`、`tax`、
   `shipping` だけを使う。再計算と Order 作成の間に別リクエストの変更を取り込まないこと。
+  Step 2 で追加した Cart-to-Order 関係を使い、作成する Order に現在の Cart を接続して
+  `cartId` を永続化する。
 - Prisma が対応する場合はこのトランザクションを `Serializable` で実行し、競合による
   シリアライズ失敗は安全に再試行するか、注文を作成せず明示的なエラーを返す。これが
   利用できない場合は、更新条件にカートの `updatedAt` を含める等の同等のバージョン検証を
@@ -138,30 +155,19 @@ price=25 のケースは `tax=3`（2.5 → round）、data に `shipping` キー
   `throw new Error("No email address found for user")`（renderError 経由で
   ユーザーにメッセージが返る）。
 - Order 作成時に、再計算した `currentCart.cartItems` の各行から `OrderItem`
-  （Step 3 でスキーマに追加）を同一トランザクションで作成する。各 `OrderItem` には
-  `productId`、`productName`（作成時点の `product.name`）、`quantity`（cartItem の
+  （Step 2 で追加済みのスキーマを使用）を同一トランザクションで作成する。各 `OrderItem`
+  には `productId`、`productName`（作成時点の `product.name`）、`quantity`（cartItem の
   `amount`）、`unitPrice`（作成時点の `product.price`）を保存する。これが注文当時の
   商品構成・単価・商品名のスナップショットになり、以後カートや商品価格・商品名が
   変わっても注文内容は変化しない。`app/api/payment/route.ts:45` は現在
   `cartItem.product.name` を Stripe の `product_data.name` にそのまま使っているが、
-  Step 3 でこれを `OrderItem.productName` から生成するように置き換える（商品が削除・
+  Step 4 でこれを `OrderItem.productName` から生成するように置き換える（商品が削除・
   改名されても注文当時の表示名が保たれる）。
 
 **Verify**: `bunx vitest run __tests__/utils/order-actions.test.ts` → 全パス
 （Step 内で期待値を新仕様に更新すること）
 
-### Step 3: Stripe セッションの請求額を orderTotal に一致させる
-
-`prisma/schema.prisma` に `OrderItem` モデル（`productId`、`productName`、`orderId`、
-`quantity`、`unitPrice` を保持、`Product`/`Order` への外部キー）と Cart-to-Order 関係を
-追加し、`createOrderAction` で作成する Order に現在の Cart を接続して `cartId` を
-永続化する。confirm ルートが Cart を削除しても注文履歴を削除しないよう、既存注文に
-対応できる optional relation と `onDelete: SetNull` を使う。`OrderItem.productId` の
-`Product` への外部キーも同様に `onDelete: SetNull`（optional relation）にする。
-`productName`/`unitPrice` が作成時点のスナップショットとして `OrderItem` 自身に
-保存されるため、参照先の `Product` が削除されても注文履歴の表示・Stripe への
-請求内容生成（Step 3）は影響を受けない。生成された Prisma マイグレーションを
-コミットする。
+### Step 4: Stripe セッションの請求額を orderTotal に一致させる
 
 `app/api/payment/route.ts`:
 - `orderId` と `cartId` を取得した後、Order が永続化した `cartId` と取得した Cart の id
@@ -172,14 +178,14 @@ price=25 のケースは `tax=3`（2.5 → round）、data に `shipping` キー
   `return_url` を組み立てる。設定が欠落・不正なら 400 を返す。null Origin の 400
   ハンドリングは維持するが、任意の Origin を受け入れる根拠にはしない。
 - line_items の商品行を、`cart.cartItems`（現在のカート内容・現在の商品価格）ではなく
-  Order に紐づく `OrderItem`（Step 2 で保存した注文時点のスナップショット）から生成する。
+  Order に紐づく `OrderItem`（Step 3 で保存した注文時点のスナップショット）から生成する。
   `product_data.name` には `orderItem.productName` を使い、`Product` テーブルを
   再読込しない（現在の `app/api/payment/route.ts:45` の `cartItem.product.name` 参照を
   置き換える）。こうすることで、注文作成後にカートの中身・商品価格・商品名が変わっても、
   また商品が削除されても、Stripe への請求内容が注文時点のまま保たれる。
 - tax と shipping の line item は、Cart の現在値ではなく Order 自身が保持する
   `order.tax` / `order.shipping`（`Order` モデルに既存のフィールド。作成時に
-  Step 2 で永続化済み）を使う:
+  Step 3 で永続化済み）を使う:
 
   ```ts
   if (order.tax > 0) line_items.push({ quantity: 1, price_data: {
@@ -200,7 +206,7 @@ Order と Cart の関係が一致しない 400、無効/未許可の origin で 
 
 **Verify**: `bunx vitest run __tests__/api/payment-route.test.ts` → 全パス
 
-### Step 4: confirm ルートの状態遷移を修正する
+### Step 5: confirm ルートの状態遷移を修正する
 
 `app/api/confirm/route.ts`:
 - `session_id` が null なら 400 を返す（`as string` キャスト除去）。
@@ -210,25 +216,33 @@ Order と Cart の関係が一致しない 400、無効/未許可の origin で 
   `session.metadata.cartId` がともに空でない文字列であることを runtime で検証する。
   欠落・空文字列・文字列以外なら 400 を返し、order 更新も cart 削除も行わない。
 - `auth()`（`@clerk/nextjs/server`）で `userId` を取得する。未認証なら 401 を返す。
-  `orderId`/`cartId` の検証後、database 更新より前に対応する Order と Cart を
-  `db.order.findUnique` / `db.cart.findUnique` で読み込み、両方が存在し、かつ
-  `order.clerkId === userId && cart.clerkId === userId` であることを確認する。
-  一方でも不一致・存在しない場合は 403 を返し、`db.order.update` と `db.cart.delete`
-  のいずれも実行しない（Plan 001 で payment ルートに追加する所有権チェックと同じ
-  パターン — セッション ID を知っている第三者が他ユーザーの注文/カートを操作できない
-  ようにする）。
-- `db.cart.delete` を上記 if の**内側**に移動する（未完了セッションでカートを
-  消さない）。cart が既に削除済み（リロード等での再訪）の場合に Prisma の
+  `orderId` の検証後、database 更新より前に `db.order.findUnique` で Order を読み込み、
+  存在しない、または `order.clerkId !== userId` の場合は 403 を返し、`db.order.update`
+  と `db.cart.delete` のいずれも実行しない（Plan 001 で payment ルートに追加する
+  所有権チェックと同じパターン — セッション ID を知っている第三者が他ユーザーの
+  注文/カートを操作できないようにする）。
+- **冪等性**: 読み込んだ Order が既に `order.isPaid === true` かつ所有者が一致する
+  場合（決済完了後の再訪・二重送信などで cart が既に削除済みのケースを含む）は、
+  Cart の存在チェックを行わずに成功として扱う（`db.order.update` は呼ばず、
+  cart が null でも 403 にせずそのまま `/orders` へ redirect）。
+- Order がまだ `isPaid !== true`（未完了）の場合のみ、従来どおり `db.cart.findUnique`
+  で Cart を読み込み、存在し `cart.clerkId === userId` であることを確認してから
+  `db.order.update` と `db.cart.delete` を実行する。Cart が存在しない、または
+  所有者が一致しない場合は 403 を返し、更新・削除のいずれも行わない。
+- `db.cart.delete` は上記の未完了 Order 分岐の**内側**に移動する（未完了セッションで
+  カートを消さない）。cart が既に削除済み（リロード等での再訪）の場合に Prisma の
   P2025 エラーで 500 にならないよう、`deleteMany({ where: { id: cartId } })` に
   変更するか try-catch で P2025 を無視する（冪等化）。
 
 Plan 002 の `confirm-route.test.ts` の期待値を更新:
-未完了セッション、無効な metadata、および `orderId`/`cartId` の所有者が呼び出しユーザーと
-一致しない場合では order 更新も cart 削除も行われない。
+未完了セッション、無効な metadata、`orderId` の所有者が呼び出しユーザーと一致しない
+場合では order 更新も cart 削除も行われないこと。加えて、既に `isPaid: true` かつ
+所有者が一致する Order に対し cart が既に存在しない状態で再訪した場合は 403 ではなく
+成功として扱われること（冪等な再送）。
 
 **Verify**: `bunx vitest run __tests__/api/confirm-route.test.ts` → 全パス
 
-### Step 5: CLAUDE.md の価格単位の記載を実装に合わせる
+### Step 6: CLAUDE.md の価格単位の記載を実装に合わせる
 
 CLAUDE.md の「価格は **セント単位の整数**（`Int`）で保存」を以下の趣旨に修正:
 「価格（`Product.price` とカート/注文の金額列）は**ドル単位の整数**で保存。
@@ -239,7 +253,7 @@ CLAUDE.md の「価格は **セント単位の整数**（`Int`）で保存」を
 **Verify**: `grep -n "セント" CLAUDE.md` → 「Stripe 送信時のみ」の文脈以外に
 「セント単位で保存」という記載が残っていない
 
-### Step 6: 全体検証
+### Step 7: 全体検証
 
 **Verify**:
 - `bun run test` → 全パス
@@ -252,11 +266,12 @@ CLAUDE.md の「価格は **セント単位の整数**（`Int`）で保存」を
 - 追加ケース: Order 作成が同一 transaction 内で更新した cart のスナップショットだけを
   使用し、競合検出時には Order を作成しないこと。
 - 追加ケース: line_items 合計と orderTotal の一致アサーション、Order と Cart の関係が
-  不一致なら Stripe を呼ばず 400、未許可 origin なら Stripe を呼ばないこと（Step 3）。
-- 追加ケース: confirm の冪等性（同一 session_id で 2 回呼んでもエラーにならない）、
+  不一致なら Stripe を呼ばず 400、未許可 origin なら Stripe を呼ばないこと（Step 4）。
+- 追加ケース: confirm の冪等性（同一 session_id で 2 回呼んでもエラーにならない。
+  既に isPaid かつ所有者が一致する Order に対し cart が既に削除済みでも 403 にならない）、
   metadata の orderId/cartId が欠落・空・非文字列なら 400 で DB を更新しないこと、
-  未認証なら 401、Order/Cart の所有者が呼び出しユーザーと一致しなければ 403 を返し
-  DB を更新しないこと（Step 4）。
+  未認証なら 401、Order の所有者が呼び出しユーザーと一致しなければ 403 を返し
+  DB を更新しないこと（Step 5）。
 
 ## Done criteria
 
@@ -270,8 +285,10 @@ CLAUDE.md の「価格は **セント単位の整数**（`Int`）で保存」を
       `order.tax` / `order.shipping` から生成され、`cart.cartItems` の現在価格を
       直接使っていない
 - [ ] confirm ルートは metadata の orderId/cartId を DB 更新前に検証し、無効なら 400 を返す
-- [ ] confirm ルートは `auth()` の userId と Order/Cart の clerkId を DB 更新前に照合し、
-      未認証なら 401、不一致なら 403 を返して `db.order.update`/`db.cart.delete` を実行しない
+- [ ] confirm ルートは `auth()` の userId と Order の clerkId を DB 更新前に照合し、
+      未認証なら 401、Order 所有者不一致なら 403 を返す。未完了 Order では Cart の
+      所有者も照合し、不一致なら 403 で `db.order.update`/`db.cart.delete` を実行しない。
+      既に isPaid な自分の Order への再訪は cart の有無に関わらず成功として扱う
 - [ ] `git status` で in-scope 外のファイルに変更がない
 - [ ] `plans/README.md` のステータス行を更新済み
 
@@ -287,10 +304,10 @@ CLAUDE.md の「価格は **セント単位の整数**（`Int`）で保存」を
 
 ## Maintenance notes
 
-- 将来 Stripe Webhook（Plan 006 の DIRECTION-01）を導入する際、Step 4 の
+- 将来 Stripe Webhook（Plan 006 の DIRECTION-01）を導入する際、Step 5 の
   isPaid 遷移ロジックを webhook ハンドラに移設し、confirm ルートは UX 用の
   リダイレクトのみに縮退させること。
 - 税率を変更する場合は `Cart.taxRate` のデフォルト値（schema）と
   characterization テストの期待値を同時に更新すること。
 - レビュー観点: 金額に関わる変更は必ず「Stripe 請求額 = Order.orderTotal」の
-  アサーション（Step 3）を維持していること。
+  アサーション（Step 4）を維持していること。

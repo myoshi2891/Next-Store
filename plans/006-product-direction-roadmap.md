@@ -8,8 +8,19 @@
 > status」表に記録する。選択されていない項目は実施対象ではなく、Plan 006 の完了を
 > 妨げない。
 >
-> **Drift check (最初に実行)**: `git diff --stat 90f91f4..HEAD -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma`
-> 対象領域が大きく変わっていたら各項目の Evidence を再確認すること。
+> **Drift check (最初に実行)**: 以下の 4 コマンドをすべて実行する:
+>
+> ```sh
+> git diff --stat 90f91f4..HEAD -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma
+> git diff --cached --stat -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma
+> git diff --stat -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma
+> git ls-files --others --exclude-standard -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma
+> ```
+>
+> 1つ目はベース SHA 以降のコミット済み変更、2つ目はステージ済み未コミット変更、
+> 3つ目は未ステージの変更、4つ目は未追跡の対象領域ファイルを検出する。
+> いずれかが対象領域の変更を報告したら、各項目の Evidence を再確認し、
+> 食い違いがあれば停止すること。
 
 ## Status
 

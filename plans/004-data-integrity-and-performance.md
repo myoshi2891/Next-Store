@@ -177,7 +177,7 @@ SQL
 ### Step 7: カートページの write-on-read を解消
 
 前提: `addToCartAction`、`removeCartItemAction`、`updateCartItemAction` はいずれも
-変更後に `updateCart(cart)` を呼んで永続化された合計を更新する。Plan 003 Step 2 は
+変更後に `updateCart(cart)` を呼んで永続化された合計を更新する。Plan 003 Step 3 は
 `createOrderAction` で注文作成前に合計を再計算する。今後のカート変更パスも、完了前に
 必ず永続化された合計を更新しなければならない。
 
