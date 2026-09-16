@@ -109,7 +109,7 @@
 または `# Stripe ダッシュボード > API キーから取得` のコメント付き）。
 **実際の値・実在の URL・実在の ID は絶対に書かない。**
 
-**Verify**: `grep -cE "=.{10,}" .env.example` → 0（値が入っていないこと）
+**Verify**: `! grep -nE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=[^[:space:]].*$' .env.example` → exit 0（コメントと空の代入は許可し、`KEY=x` を含む任意の非空値を検出する）
 
 ### Step 3: README の記載を実態に合わせる
 

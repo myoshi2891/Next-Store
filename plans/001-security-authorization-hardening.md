@@ -38,9 +38,11 @@ Server Action は「そのモジュールを import するどのページから�
   - `utils/actions.ts:16-26` — `getAuthUser()`（未認証→リダイレクト）と `getAdminUser()`（`ADMIN_USER_ID` 環境変数と比較）。
   - `utils/actions.ts:68-98` — `createProductAction` は **`getAuthUser()` のみ**（line 72）。同種の admin 操作 `deleteProductAction:112`, `updateProductAction:138`, `updateProductImageAction:163`, `fetchAdminProducts:101` はすべて `getAdminUser()` を呼んでいる。この 1 箇所だけ規約違反。
   - `utils/actions.ts:203-234` — `toggleFavoriteAction`。削除分岐（211-216）は:
+
     ```ts
     await db.favorite.delete({ where: { id: favoriteId } });
     ```
+
     `clerkId` によるスコープなし。対照的に `deleteReviewAction`（325-330）は `where: { id: reviewId, clerkId: user.id }` と正しくスコープしている — これが従うべきパターン。
   - `utils/actions.ts:249-269` — `createReviewAction` は `validatedFields`（`authorName`, `authorImageUrl` を含む）をそのまま `db.review.create` に展開。`findExistingReview`（338-345）はアクション内では呼ばれず、`app/products/[id]/page.tsx` の表示制御にのみ使用。
   - `utils/actions.ts:28-33` — `renderError` は `error.message`（Prisma の内部エラー文字列を含む）をそのまま返す。
@@ -50,6 +52,7 @@ Server Action は「そのモジュールを import するどのページから�
 - `utils/supabase.ts:10-20` — `uploadImage` はストレージキーを `${timestamp}-${image.name}` で生成（クライアント由来ファイル名を未サニタイズで使用）。
 - `app/api/payment/route.ts:6-35` — POST ハンドラ。`orderId`/`cartId` をリクエストボディから受け取り `findUnique` するだけで、呼び出しユーザーとの所有権照合なし。認証チェック自体もなし（`auth()` を呼んでいない）。
 - `app/api/confirm/route.ts:7-39` — GET ハンドラ。Stripe セッションの metadata から orderId/cartId を取得して更新（このルートは Stripe セッション ID を知っている必要があるため優先度は下がるが、payment 側は必須）。
+- `prisma/schema.prisma:43-54` — `Review` は `clerkId` と `productId` を保持するが、複合ユニーク制約はない。
 
 リポジトリ規約（CLAUDE.md より）:
 - 「admin 操作の Server Action 冒頭で必ず `await getAdminUser()` を呼ぶ」
@@ -72,11 +75,11 @@ Server Action は「そのモジュールを import するどのページから�
 - `utils/supabase.ts`
 - `app/api/payment/route.ts`
 - `components/reviews/SubmitReview.tsx`
+- `prisma/schema.prisma` と、この変更で生成される `prisma/migrations/` 配下のマイグレーション
 - `__tests__/security/` 配下（テスト追加）
 
 **Out of scope**（触らない）:
 - `app/api/confirm/route.ts` の決済状態遷移ロジック — Plan 003 の担当。ここで直すと衝突する。
-- `prisma/schema.prisma` — ユニーク制約の追加は Plan 004 の担当。
 - `middleware.ts` — 現状の挙動は正しい。
 - Stripe の line_items / 金額計算 — Plan 003 の担当。
 
@@ -111,14 +114,19 @@ await db.favorite.delete({
 
 ### Step 3: createReviewAction の作者情報をサーバー側で確定し、重複投稿を拒否する
 
+`prisma/schema.prisma` の `Review` に `@@unique([clerkId, productId])` を追加し、
+生成された Prisma マイグレーションをコミットする。適用前に既存の Review の
+`(clerkId, productId)` 重複を確認し、存在する場合は STOP して解消方針をメンテナーに
+確認する。
+
 `utils/actions.ts:249-269` を変更:
 1. `validatedFields` から `authorName`/`authorImageUrl` を使わず、認証済み `user` から導出する（`user.firstName ?? "user"`、`user.imageUrl`）。
-2. create の前に `findExistingReview(user.id, validatedFields.productId)` を呼び、既存レビューがあれば `{ message: "You have already reviewed this product" }` を返す。
+2. `findExistingReview` は表示制御のために残してよいが、作成可否の唯一の防御にはしない。`db.review.create` の `P2002`（`clerkId` と `productId` の複合ユニーク制約違反）をアクション内で捕捉し、`{ message: "You have already reviewed this product" }` を返す。ほかのエラーは従来どおり `renderError` に渡す。
 
 `utils/schemas.ts:33-52` の `reviewSchema` から `authorName`/`authorImageUrl` を削除し、
 `components/reviews/SubmitReview.tsx:33-42` の該当 hidden input 2 つを削除する。
 
-**Verify**: `bunx tsc --noEmit` → exit 0（スキーマ変更により型エラーが出た場合、
+**Verify**: `bunx prisma validate` と `bunx tsc --noEmit` → exit 0（スキーマ変更により型エラーが出た場合、
 `reviewSchema` の利用箇所は `createReviewAction` のみのはず — 他で使われていたら STOP）
 
 ### Step 4: payment ルートに認証と所有権チェックを追加
@@ -176,7 +184,7 @@ if (order.clerkId !== userId || cart.clerkId !== userId) {
 
 - createProductAction: 非 admin ユーザー（`currentUser` モックが ADMIN_USER_ID 以外を返す）で呼ぶと商品が作成されない
 - toggleFavoriteAction: delete の `where` に `clerkId` が含まれる（モックの呼び出し引数を検証）
-- createReviewAction: 既存レビューがある場合に create が呼ばれない
+- createReviewAction: `P2002` を返す create モックで重複投稿メッセージを返し、並行リクエストでも重複成功にならない
 - renderError 相当: 非 ValidationError で内部メッセージが返らない
 
 **Verify**: `bun run test` → 全パス、新規テストが 4 件以上含まれる
@@ -193,6 +201,7 @@ if (order.clerkId !== userId || cart.clerkId !== userId) {
 すべて満たすこと:
 
 - [ ] `bunx tsc --noEmit` が exit 0
+- [ ] `bunx prisma validate` が exit 0。`Review` に `@@unique([clerkId, productId])` を含むマイグレーションがある
 - [ ] `bun run lint` が exit 0
 - [ ] `bun run test` が exit 0、新規セキュリティテスト 4 件以上を含む
 - [ ] `grep -n "getAuthUser" utils/actions.ts` の結果に `createProductAction` 内の呼び出しが含まれない（`getAdminUser` に置換済み）

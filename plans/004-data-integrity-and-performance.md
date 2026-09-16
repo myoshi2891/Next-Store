@@ -33,11 +33,14 @@
 
 ## Current state
 
-- `prisma/schema.prisma:34-41` — `Favorite`: `@@unique` なし。
+- `prisma/schema.prisma:34-68` — `Favorite` と `Cart` に `@@unique` なし。Cart は
+  user ごとに 1 件であるべきだが `clerkId` が重複可能。
   `prisma/schema.prisma:70-79` — `CartItem`: `@@unique` なし。
   スキーマ全体に `@@index` が 1 つもない。
 - `utils/actions.ts:414-447` — `updateOrCreateCartItem`: `findFirst` →
   `update`/`create`（非アトミック）。
+- `utils/actions.ts:387-412` — `fetchOrCreateCart`: `findFirst` 後に `create` する
+  check-then-act のため、並行リクエストで同一 `clerkId` の Cart を複数作成できる。
 - `utils/actions.ts:490-504` — `addToCartAction`: fetchProduct →
   fetchOrCreateCart → updateOrCreateCartItem → updateCart の 4 連続書き込みで
   `$transaction` なし。
@@ -95,7 +98,7 @@
 
 - `Favorite`: `@@unique([clerkId, productId])`
 - `CartItem`: `@@unique([cartId, productId])`, `@@index([productId])`
-- `Cart`: `@@index([clerkId])`
+- `Cart`: `@@unique([clerkId])`
 - `Review`: `@@index([productId])`, `@@index([clerkId])`
 - `Order`: `@@index([clerkId, isPaid])`
 
@@ -111,10 +114,10 @@ SELECT "clerkId", "productId", COUNT(*) FROM "Favorite" GROUP BY 1,2 HAVING COUN
 SQL
 ```
 
-同様に `CartItem` の `(cartId, productId)` も確認。**重複が存在した場合は STOP**
+同様に `CartItem` の `(cartId, productId)` と Cart の `clerkId` も確認。**重複が存在した場合は STOP**
 （重複解消の方針 — 最新行を残す等 — はオペレーターの判断が必要）。
 
-**Verify**: 両クエリとも 0 行
+**Verify**: 各クエリとも 0 行
 
 ### Step 3: マイグレーション実行
 
@@ -124,6 +127,7 @@ SQL
 
 ### Step 4: check-then-act を upsert に置換
 
+- `fetchOrCreateCart` を `db.cart.upsert({ where: { clerkId: userId }, create: { clerkId: userId }, update: {}, include: includeProductClause })` に置き換える。Step 1 の `@@unique([clerkId])` とこの upsert を、同一ユーザーの Cart 作成を並行リクエストでも 1 件に保つ一次対策として使う。`addToCartAction` のトランザクション化だけに依存しない。
 - `utils/actions.ts` の `updateOrCreateCartItem`（414-447）を
   `db.cartItem.upsert` に書き換える（Step 1 の `@@unique([cartId, productId])` により
   `cartId_productId` 複合キーが where に使える）:
@@ -172,8 +176,10 @@ SQL
 
 ### Step 7: カートページの write-on-read を解消
 
-前提: Plan 003 Step 2 により、合計の再計算はすべてのカート変更アクションと
-注文作成時に行われている。
+前提: `addToCartAction`、`removeCartItemAction`、`updateCartItemAction` はいずれも
+変更後に `updateCart(cart)` を呼んで永続化された合計を更新する。Plan 003 Step 2 は
+`createOrderAction` で注文作成前に合計を再計算する。今後のカート変更パスも、完了前に
+必ず永続化された合計を更新しなければならない。
 
 `app/cart/page.tsx:11-12` — `updateCart(previousCart)` の呼び出しを除去し、
 `fetchOrCreateCart` の戻り値（保存済み totals + cartItems）をそのまま表示に使う。
@@ -186,6 +192,7 @@ SQL
 - Plan 002 のカート計算テストが回帰ゲート（upsert 化後も合計値の期待が不変）。
 - 追加: `fetchFavoriteIdsForProducts` の単体テスト（未認証→空 Map、認証→Map 構築）。
 - 追加: upsert の呼び出し引数検証（`cartId_productId` キーが使われること）。
+- 追加: `fetchOrCreateCart` の upsert 引数検証（`clerkId` の unique where が使われること）。
 
 ## Done criteria
 

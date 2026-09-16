@@ -12,13 +12,29 @@ STOP conditions を厳守し、完了時に自分の行のステータスを更�
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
 | [001](001-security-authorization-hardening.md) | Server Action と決済 API の認可・入力検証強化 | P1 | M | — | TODO |
-| [002](002-money-path-test-baseline.md) | 金額・注文・決済パスの挙動テスト基盤 | P1 | L | — | TODO |
+| [002](002-money-path-test-baseline.md) | 金額・注文・決済パスの挙動テスト基盤 | P1 | L | 001 | TODO |
 | [003](003-payment-flow-consistency.md) | 決済フローの金額整合性と状態遷移の修正 | P1 | M | 002 | TODO |
 | [004](004-data-integrity-and-performance.md) | DB 整合性制約とホットパス性能改善 | P2 | M | 002, 003 | TODO |
 | [005](005-dx-deps-docs-cleanup.md) | DX・依存関係・ドキュメント整備 | P2 | M | — | TODO |
-| [006](006-product-direction-roadmap.md) | プロダクトロードマップ（設計スパイク束） | P3 | 項目別 | 6-1 のみ 003 | TODO |
+| [006](006-product-direction-roadmap.md) | プロダクトロードマップ（設計スパイク束） | P3 | 項目別 | 6-1 のみ 003 | TODO — selected scope: none |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED（理由 1 行）| REJECTED（理由 1 行）
+
+## Plan 006 item selection & status
+
+Select an item by changing `Selected` to `Yes` and its status to `IN PROGRESS`
+before its spike begins. `NOT SELECTED` items are intentionally out of scope.
+Plan 006 is DONE when at least one item is selected and every selected item is
+DONE; unselected items do not block completion.
+
+| Item | Title | Selected | Status | Notes |
+|------|-------|----------|--------|-------|
+| 6-1 | Stripe Webhook による決済確定 | No | NOT SELECTED | Requires Plan 003 |
+| 6-2 | 注文詳細ページ | No | NOT SELECTED | — |
+| 6-3 | 注文確認メール | No | NOT SELECTED | Prefer after 6-1 |
+| 6-4 | 管理ダッシュボードの実体化 | No | NOT SELECTED | — |
+| 6-5 | レビュー編集 | No | NOT SELECTED | — |
+| 6-6 | 商品ディスカバリの拡張 | No | NOT SELECTED | — |
 
 ## Dependency notes
 
@@ -27,8 +43,9 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED（理由 1 行）| REJECTED�
 - **004 は 003 の後**: 同じ `utils/actions.ts` の `updateCart` 周辺を触るため
   順序を固定して衝突を防ぐ。また 004 のトランザクション化は 003 の丸め修正済み
   コードを前提とする。
-- **001 と 002 は並行可能**（触るファイルの重なりが小さい）。ただし同時実行時は
-  `utils/actions.ts` のマージ衝突に注意。
+- **002 は 001 の後**: 002 の payment-route テストは 001 で追加する認証・所有権
+  チェックの 401/403 契約を検証する。001 未完了の状態でこれらのテストを追加しても
+  現行ルートでは通らない。
 - **005 は完全に独立** — CI（005 Step 7）を先に入れると他プランの検証が
   自動化されるため、順序を繰り上げてもよい。
 - **006 の 6-1（Stripe Webhook）は 003 完了後** — confirm ルートを両方が触る。

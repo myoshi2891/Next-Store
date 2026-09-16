@@ -14,7 +14,7 @@
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: LOW（テスト追加のみ — プロダクションコードは変更しない）
-- **Depends on**: none（Plan 001 と並行可。ただし Plan 003 はこのプランの完了が前提）
+- **Depends on**: plans/001-security-authorization-hardening.md（payment ルートの 401/403 契約をテストするため）。Plan 003 はこのプランの完了が前提。
 - **Category**: tests
 - **Planned at**: commit `90f91f4`, 2026-07-05
 
@@ -136,10 +136,13 @@ Clerk は `vi.mock("@clerk/nextjs/server")` で `auth`/`currentUser` をモッ�
 `__tests__/api/payment-route.test.ts` を作成。`stripe` パッケージを `vi.mock` し、
 `checkout.sessions.create` の呼び出し引数を検証する:
 
+- 認証済み fixture は `auth()` の `userId`、`order.clerkId`、`cart.clerkId` を同じ値にして、既存の正常系・引数検証・404 ケースを所有権チェックの前提で実行する
 - line_items の `unit_amount` が `product.price * 100` であること
 - **line_items の合計が商品小計のみで、cart.tax / cart.shipping が含まれない**こと
   （現挙動の記録 — Plan 003 が修正後にこの期待値を「orderTotal と一致」に反転させる）
 - order または cart が見つからない場合に 404 が返ること
+- `auth()` が userId を返さない未認証リクエストは 401 を返すこと
+- 認証済みでも order または cart の `clerkId` が userId と一致しない場合は 403 を返し、Stripe セッションを作成しないこと
 
 **Verify**: `bunx vitest run __tests__/api/payment-route.test.ts` → 全パス
 

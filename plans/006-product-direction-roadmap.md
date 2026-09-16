@@ -4,6 +4,9 @@
 > 各項目は「調査・設計・オープンクエスチョンの解消」を成果物とし、コードの
 > 本実装は各スパイク完了後に個別プランを起こして行う。着手する項目は
 > オペレーター（メンテナー）が選定する — 全項目を一括で進めないこと。
+> 選択範囲と 6-1〜6-6 の状態は `plans/README.md` の「Plan 006 item selection &
+> status」表に記録する。選択されていない項目は実施対象ではなく、Plan 006 の完了を
+> 妨げない。
 >
 > **Drift check (最初に実行)**: `git diff --stat 90f91f4..HEAD -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma`
 > 対象領域が大きく変わっていたら各項目の Evidence を再確認すること。
@@ -16,6 +19,10 @@
 - **Depends on**: 6-1 は plans/003 完了後に着手すること（同じコードを触る）
 - **Category**: direction
 - **Planned at**: commit `90f91f4`, 2026-07-05
+- **Selection policy**: 実施する項目を README の表で `Selected: Yes` にしてから開始する。
+  Plan 006 は、少なくとも 1 項目が選択され、その**全選択項目**が完了した時点で DONE に
+  できる。選択されていない項目は将来の候補として `Selected: No` のまま残し、DONE の
+  条件には含めない。
 
 ## Why this matters
 
@@ -125,9 +132,11 @@
 
 ## Done criteria（スパイクごと）
 
-- [ ] 上記「スパイクの成果物」の各項目が文書化されている
-- [ ] Open questions がすべて「決定」または「メンテナーへの質問リスト」に変換されている
-- [ ] 実装プラン（1xx 番台）が plan-template 準拠で作成されている
+- [ ] 作業開始前に `plans/README.md` で選択範囲を記録し、対象の各項目を `Selected: Yes` と `IN PROGRESS` にする
+- [ ] 選択した各項目についてのみ、上記「スパイクの成果物」の各項目が文書化されている
+- [ ] 選択した各項目についてのみ、Open questions がすべて「決定」または「メンテナーへの質問リスト」に変換されている
+- [ ] 選択した各項目についてのみ、実装プラン（1xx 番台）が plan-template 準拠で作成され、README の項目 status が DONE である
+- [ ] Plan 006 全体は、少なくとも 1 項目が選択済みで、その全選択項目が DONE の場合にのみ DONE にする。未選択項目はこの判定を妨げない
 
 ## STOP conditions
 
