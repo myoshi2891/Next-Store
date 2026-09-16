@@ -11,10 +11,10 @@
 > **Drift check (最初に実行)**: 以下の 4 コマンドをすべて実行する:
 >
 > ```sh
-> git diff --stat 90f91f4..HEAD -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md
-> git diff --cached --stat -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md
-> git diff --stat -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md
-> git ls-files --others --exclude-standard -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md
+> git diff --stat 90f91f4..HEAD -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md next.config.mjs
+> git diff --cached --stat -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md next.config.mjs
+> git diff --stat -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md next.config.mjs
+> git ls-files --others --exclude-standard -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md next.config.mjs
 > ```
 >
 > 1つ目はベース SHA 以降のコミット済み変更、2つ目はステージ済み未コミット変更、

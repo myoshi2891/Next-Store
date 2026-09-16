@@ -218,20 +218,28 @@ SQL
 `utils/actions.ts` の `updateProductAction`（商品更新アクション）内で、
 商品価格が変更された場合（`data.price !== undefined`）に以下の処理を追加する:
 
-1. 価格変更後の `db.product.update()` 呼び出し完了直後に、該当 `productId` を含む
-   `CartItem` を持つ全 Cart を特定する:
+1. 商品更新・Cart 再計算・合計更新をすべて同一の `db.$transaction(async (tx) => { ... })`
+   で囲む。トランザクション内での処理順:
+
+   a. `tx.product.update()` で商品を更新する。
+
+   b. 同じ `tx` を使って該当 `productId` を含む `CartItem` を持つ全 Cart を特定する:
 
    ```ts
-   const affectedCarts = await db.cart.findMany({
+   const affectedCarts = await tx.cart.findMany({
      where: { cartItems: { some: { productId } } },
      include: { cartItems: { include: { product: true } } },
    });
    ```
 
-2. 特定した各 Cart に対して `updateCart(cart, tx)` を呼んで
-   `cartTotal` / `orderTotal` / `numItemsInCart` を再計算・永続化する。
-   この再計算は `updateProductAction` のトランザクション内で実行し、
-   商品更新と合計更新が不可分になるようにする。
+   c. 特定した各 Cart に対して同じ `tx` を渡して `updateCart(cart, tx)` を呼ぶ。
+
+2. `updateCart` がトランザクションクライアント `tx` を受け取れるよう、第2引数として
+   Prisma トランザクションクライアントを受け付けるようにシグネチャを更新する（他の
+   呼び出し元は `tx` を渡さないため、省略可能な引数とし、省略時は `db` にフォールバック
+   するか、非トランザクション呼び出し元を `db.$transaction` でラップする）。
+
+   これにより商品更新・Cart 検索・合計更新の3操作が同一 `tx` を共有し、不可分になる。
 
 3. **表示の一貫性**: `CartItemsList`（カート内商品一覧）と `CartTotals`（合計欄）は
    ともに `fetchOrCreateCart`（7a で write-on-read を除去済み）の戻り値に依存するため、

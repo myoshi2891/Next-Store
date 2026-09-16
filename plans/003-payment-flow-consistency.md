@@ -135,6 +135,24 @@ price=25 のケースは `tax=3`（2.5 → round）、data に `shipping` キー
 表示・Stripe への請求内容生成（Step 4）は影響を受けない。生成された Prisma
 マイグレーションをコミットする。
 
+**既存 Order の取り扱い（移行方針を選択して実施すること）**:  
+スキーマ追加前に作成された Order は `cartId` も `OrderItem` も持たない。
+このような legacy Order が新しい checkout フローに到達した場合、以下のいずれかを
+選択して実装し、選んだ方針を `createOrderAction`（Step 3）と Step 4 の
+Checkout Session 作成処理の冒頭に STOP 条件として明記すること:
+
+- **Option A — Backfill migration**: `cartId` と `OrderItem` を復元できる
+  backfill データマイグレーション（`prisma/migrations/` に追加）を作成し、
+  既存 Order を新仕様に移行する。復元できない Order（Cart が既に削除済みなど）は
+  `cartId = null` のまま残し、Option B の STOP 条件で捕捉する。
+- **Option B — Explicit rejection**: backfill を行わず、
+  `createOrderAction` と Checkout Session 作成処理で `order.cartId == null ||
+  orderItems.length === 0` を検出したら処理を中断し、ユーザーに明示的なエラーを返す。
+  カートを削除したり Stripe を呼び出したりしない。
+
+**STOP 条件**: 両 Option とも実装途中で想定外の状態（例: 複数 Cart が同一 Order に
+紐づいている等）を検出したら、ロールバックして報告すること。
+
 **Verify**: `bunx prisma generate` → exit 0（`OrderItem` 型が生成されること）
 
 ### Step 3: createOrderAction で合計を再計算する
@@ -183,11 +201,23 @@ price=25 のケースは `tax=3`（2.5 → round）、data に `shipping` キー
     追加の DB ロックなしに重複作成が防止できる。冪等キーは 24 時間有効であり
     Stripe の推奨方式。
   - **Option B — Order の処理中フラグ**: `Order` モデルに `isPending Boolean @default(false)`
-    フィールドを追加し（要マイグレーション）、セッション作成前に
-    `db.order.update({ where: { id: orderId }, data: { isPending: true } })`
-    を実行して「処理中」予約を立てる。既に `isPending: true` の Order が来たら
-    409 を返しセッション作成を拒否する。confirm ルート（Step 5）で `isPaid: true`
-    にする際に `isPending: false` に戻す。
+    フィールドを追加し（要マイグレーション）、セッション作成前に以下の**アトミック**な
+    更新で「処理中」予約を確保する:
+    ```ts
+    const reserved = await db.order.updateMany({
+      where: { id: orderId, isPending: false },
+      data: { isPending: true },
+    });
+    if (reserved.count !== 1) return new Response(null, { status: 409 });
+    ```
+    `updateMany` は `isPending: false` の場合のみ更新するため、同時リクエストが
+    ゼロ件更新（`count === 0`）となり 409 で拒否される。この方式は
+    read-then-write ではなく単一の条件付き write であるため、競合状態が生じない。
+    confirm ルート（Step 5）で `isPaid: true` にする際に `isPending: false` に戻す
+    (`data: { isPaid: true, isPending: false }`)。
+    **並行テスト**: 同一 `orderId` に対して 2 つのリクエストを同時に送るシナリオの
+    ユニットテストを `__tests__/api/payment-route.test.ts` に追加し、1 つが 200、
+    もう 1 つが 409 を返すこと、および Stripe が 1 度だけ呼ばれることを検証する。
     **注意**: このアプローチはスキーマ変更を伴うため Plan 004 のマイグレーションと
     競合しないよう実行順を調整すること。
   - **STOP 条件**: 両アプローチとも実装困難な事情（環境制約・既存テストとの干渉）が
@@ -248,9 +278,15 @@ Order と Cart の関係が一致しない 400、無効/未許可の origin で 
   場合（決済完了後の再訪・二重送信などで cart が既に削除済みのケースを含む）は、
   Cart の存在チェックを行わずに成功として扱う（`db.order.update` は呼ばず、
   cart が null でも 403 にせずそのまま `/orders` へ redirect）。
-- Order がまだ `isPaid !== true`（未完了）の場合のみ、従来どおり `db.cart.findUnique`
-  で Cart を読み込み、存在し `cart.clerkId === userId` であることを確認してから
-  未完了 Order 分岐内で `db.order.update` と `db.cart.delete` を実行する。
+  **注意**: 支払い済み（`isPaid === true`）の Order に対しては、以下の `cartId`
+  一致検証（未完了 Order 分岐）を適用しない。
+- Order がまだ `isPaid !== true`（未完了）の場合のみ: Cart を取得した後かつ
+  `db.$transaction` 実行前に、`order.cartId`（DB に永続化済み）と
+  `session.metadata.cartId`（Stripe メタデータ由来）が一致することを検証する。
+  不一致の場合は 400 を返し、Order 更新も Cart 削除も行わない。
+  その後、従来どおり `db.cart.findUnique` で Cart を読み込み、存在し
+  `cart.clerkId === userId` であることを確認してから未完了 Order 分岐内で
+  `db.order.update` と `db.cart.delete` を実行する。
   **この 2 操作は必ず `db.$transaction(async (tx) => { ... })` で包むこと**:
   どちらかが失敗した場合に両方がロールバックされ、「Order が paid になったが Cart が
   残る」または「Cart が消えたが Order が unpaid のまま」という不整合が生じない。
