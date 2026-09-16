@@ -161,10 +161,19 @@ Clerk は `vi.mock("@clerk/nextjs/server")` で `auth`/`currentUser` をモッ�
 
 `__tests__/utils/schemas.test.ts` を作成:
 
-- `imageSchema`: 1MB 超のファイルで失敗、Plan 001 が導入する許可リスト
-  （`image/jpeg`, `image/png`, `image/webp`, `image/gif`）の4種類のみ成功、
-  それ以外の `image/*`（例: `image/svg+xml`, `image/avif`）および非画像 MIME は
-  すべて拒否
+- `imageSchema`（`validateImageFile` への委譲を網羅）:
+  - サイズ: 1MB 超のファイルで失敗、1MB ちょうどおよびそれ以下で成功
+  - 許可 MIME: Plan 001 が導入する許可リスト（`image/jpeg`, `image/png`,
+    `image/webp`, `image/gif`）の 4 種類のみ成功する
+  - 拒否 MIME: `image/svg+xml`, `image/avif` 等その他の `image/*` および
+    `application/pdf` 等の非画像 MIME はすべて拒否される
+  - **MIME スプーフィング**: `type: "image/jpeg"` と宣言しつつ実際のバイト列は
+    テキスト（例: `"PK\x03\x04"` = ZIP ヘッダ）の File オブジェクトを渡す。
+    現在の `validateImageFile` は MIME 文字列のみを検査しバイト内容は検証しないため
+    このケースは**成功する**ことを記録する（意図的な現挙動テスト）。
+    Plan 001 がバイト署名検証を追加した場合はこのテストの期待値を更新すること。
+  - **無効画像バイト（非画像 MIME 宣言時）**: `type: "application/octet-stream"` で
+    ランダムバイト列を渡した場合は MIME チェックで拒否される。
 - `productSchema`: price に負数・小数で失敗、description 10 語未満で失敗
 - `validateWithZodSchema`: 失敗時にメッセージが結合された Error を throw
 

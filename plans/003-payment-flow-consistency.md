@@ -173,6 +173,28 @@ price=25 のケースは `tax=3`（2.5 → round）、data に `shipping` キー
 - `orderId` と `cartId` を取得した後、Order が永続化した `cartId` と取得した Cart の id
   が一致することを Stripe セッション作成前に検証する。一致しなければ 400 を返し、
   line_items の生成・Stripe 呼び出しは行わない。
+- **Checkout Session 重複作成の扱い**（同一 `orderId` + `cartId` に対する二重リクエスト）:
+  ネットワーク再試行やページリロードで同一 Order に対して payment ルートが複数回
+  呼ばれると、Stripe に複数の Checkout Session が作成される可能性がある。
+  この問題を本 Step で解消するために、以下の **2 つのアプローチのいずれかを選択**する:
+  - **Option A — Stripe 冪等キー（推奨）**: `stripe.checkout.sessions.create` の
+    第 2 引数に `{ idempotencyKey: \`checkout-${orderId}\` }` を渡す。同一キーで
+    再リクエストされた場合 Stripe は最初のセッションをそのまま返すため、
+    追加の DB ロックなしに重複作成が防止できる。冪等キーは 24 時間有効であり
+    Stripe の推奨方式。
+  - **Option B — Order の処理中フラグ**: `Order` モデルに `isPending Boolean @default(false)`
+    フィールドを追加し（要マイグレーション）、セッション作成前に
+    `db.order.update({ where: { id: orderId }, data: { isPending: true } })`
+    を実行して「処理中」予約を立てる。既に `isPending: true` の Order が来たら
+    409 を返しセッション作成を拒否する。confirm ルート（Step 5）で `isPaid: true`
+    にする際に `isPending: false` に戻す。
+    **注意**: このアプローチはスキーマ変更を伴うため Plan 004 のマイグレーションと
+    競合しないよう実行順を調整すること。
+  - **STOP 条件**: 両アプローチとも実装困難な事情（環境制約・既存テストとの干渉）が
+    ある場合は実装を中断して報告する。重複 Session 問題の解消を Plan 006（Webhook
+    実装）の前提として残す場合は、その旨をメンテナーに確認すること。Plan 006 の
+    6-1（Stripe Webhook）は本 Step の重複問題が未解消でも着手できるが、Webhook の
+    冪等処理と本 Step の重複対策が二重防衛になることを前提として設計すること。
 - `Origin` ヘッダは return URL の基準に使わない。デプロイ設定で管理する canonical
   origin（例: `APP_URL`）を `new URL` で検証し、許可した scheme/host のみを使って
   `return_url` を組み立てる。設定が欠落・不正なら 400 を返す。null Origin の 400
@@ -202,7 +224,8 @@ price=25 のケースは `tax=3`（2.5 → round）、data に `shipping` キー
 
 Plan 002 の `payment-route.test.ts` の期待値を「line_items 合計 = orderTotal × 100」に更新し、
 Order と Cart の関係が一致しない 400、無効/未許可の origin で Stripe が呼ばれないことを
-追加する。
+追加する。冪等キー（Option A 選択時）または isPending フラグ（Option B 選択時）の
+動作テストを追加すること。
 
 **Verify**: `bunx vitest run __tests__/api/payment-route.test.ts` → 全パス
 
@@ -227,18 +250,32 @@ Order と Cart の関係が一致しない 400、無効/未許可の origin で 
   cart が null でも 403 にせずそのまま `/orders` へ redirect）。
 - Order がまだ `isPaid !== true`（未完了）の場合のみ、従来どおり `db.cart.findUnique`
   で Cart を読み込み、存在し `cart.clerkId === userId` であることを確認してから
-  `db.order.update` と `db.cart.delete` を実行する。Cart が存在しない、または
-  所有者が一致しない場合は 403 を返し、更新・削除のいずれも行わない。
-- `db.cart.delete` は上記の未完了 Order 分岐の**内側**に移動する（未完了セッションで
-  カートを消さない）。cart が既に削除済み（リロード等での再訪）の場合に Prisma の
-  P2025 エラーで 500 にならないよう、`deleteMany({ where: { id: cartId } })` に
-  変更するか try-catch で P2025 を無視する（冪等化）。
+  未完了 Order 分岐内で `db.order.update` と `db.cart.delete` を実行する。
+  **この 2 操作は必ず `db.$transaction(async (tx) => { ... })` で包むこと**:
+  どちらかが失敗した場合に両方がロールバックされ、「Order が paid になったが Cart が
+  残る」または「Cart が消えたが Order が unpaid のまま」という不整合が生じない。
+  実装例:
+
+  ```ts
+  await db.$transaction(async (tx) => {
+    await tx.order.update({ where: { id: orderId }, data: { isPaid: true } });
+    await tx.cart.deleteMany({ where: { id: cartId } });
+  });
+  ```
+
+  Cart が存在しない、または所有者が一致しない場合は 403 を返し、更新・削除のいずれも行わない。
+- `db.cart.delete` は上記の未完了 Order 分岐の**内側**の `$transaction` ブロックに移動する
+  （未完了セッションでカートを消さない）。cart が既に削除済み（リロード等での再訪）の場合に
+  Prisma の P2025 エラーで 500 にならないよう `deleteMany({ where: { id: cartId } })` を
+  使う（冪等化）。`deleteMany` はゼロ件削除でも例外を投げない。
 
 Plan 002 の `confirm-route.test.ts` の期待値を更新:
 未完了セッション、無効な metadata、`orderId` の所有者が呼び出しユーザーと一致しない
 場合では order 更新も cart 削除も行われないこと。加えて、既に `isPaid: true` かつ
 所有者が一致する Order に対し cart が既に存在しない状態で再訪した場合は 403 ではなく
-成功として扱われること（冪等な再送）。
+成功として扱われること（冪等な再送）。また、`db.order.update` が成功して
+`db.cart.deleteMany` が失敗するシナリオ（モックで throwさせる）でも Order の
+`isPaid` が true にならないこと（トランザクションのロールバック確認）を追加すること。
 
 **Verify**: `bunx vitest run __tests__/api/confirm-route.test.ts` → 全パス
 

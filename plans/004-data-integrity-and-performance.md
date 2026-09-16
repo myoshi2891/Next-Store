@@ -143,9 +143,35 @@ SQL
 - `toggleFavoriteAction` の create 分岐は、重複時に P2002 エラーとなるため
   try-catch で「既に追加済み」として扱うか、`upsert` に変更する。
 - `addToCartAction`（490-504）の `updateOrCreateCartItem` + `updateCart` を
-  `db.$transaction(async (tx) => { ... })` で包む。`updateCart` が `db` を直接
-  参照しているため、トランザクションクライアント `tx` を引数で受け取れるよう
-  シグネチャを拡張する（デフォルト値 `db` で後方互換を維持）。
+  `db.$transaction(async (tx) => { ... }, { isolationLevel: "Serializable" })`
+  で包む。Serializable 分離レベルを指定することで、異なる商品を同時追加した場合の
+  競合による `numItemsInCart` / `cartTotal` / `orderTotal` の不整合を防ぐ。
+  `updateCart` が `db` を直接参照しているため、トランザクションクライアント `tx` を
+  引数で受け取れるようシグネチャを拡張する（デフォルト値 `db` で後方互換を維持）。
+
+  **シリアライズ失敗時の再試行**: PostgreSQL が直列化失敗（`P2034` /
+  `SQLSTATE 40001`）を返した場合は安全に再試行できる。呼び出し箇所を
+  `for (let i = 0; i < 3; i++)` のループで包み、`P2034` なら continue、
+  それ以外は throw するパターンを実装する。
+
+  **Serializable を利用できない環境向けのフォールバック**:
+  Supabase PgBouncer のトランザクションプーリングモード等で Serializable が
+  使えない場合は、`updateCart` 内で `db.cart.update({ where: { id: cartId, version: currentVersion }, data: { version: { increment: 1 }, ...sums } })` の
+  楽観的ロック（Cart にバージョンカラムを追加）を行い、
+  `count === 0`（別トランザクションが先に更新済み）なら `P2034` と同様に再試行する。
+  バージョンカラム追加には Plan 004 Step 1/3 のマイグレーションと同じ
+  `bunx prisma migrate dev` を使うこと（Step 1 と同一マイグレーションファイルにまとめても可）。
+
+  **STOP 条件**: Supabase 環境で Serializable が実際に使えるかどうかは
+  実行前に `bunx prisma db execute --stdin <<'SQL'
+  BEGIN ISOLATION LEVEL SERIALIZABLE; ROLLBACK;
+  SQL` で確認すること。エラーが返る場合はフォールバック方式を選択する。
+
+  **回帰テスト**: 異なる商品 A と B を同時追加した場合（2 並列の `addToCartAction` をモックで再現）に
+  CartItem が 2 件、`numItemsInCart` が 2、`cartTotal` が `priceA + priceB`、
+  `orderTotal` が `cartTotal + tax + shipping` と一致することを確認するテストを
+  `__tests__/utils/cart-concurrent.test.ts` に追加する。
+
 
 **Verify**: `bun run test` → 全パス（Plan 002 のカート計算テスト含む）
 
@@ -174,7 +200,9 @@ SQL
 
 **Verify**: `grep -n "priority" components/products/ProductsGrid.tsx components/products/ProductsList.tsx` → 0 件
 
-### Step 7: カートページの write-on-read を解消
+### Step 7: カートページの write-on-read を解消 / 商品価格変更後のカート再計算
+
+**7a — write-on-read の除去**
 
 前提: `addToCartAction`、`removeCartItemAction`、`updateCartItemAction` はいずれも
 変更後に `updateCart(cart)` を呼んで永続化された合計を更新する。Plan 003 Step 3 は
@@ -184,6 +212,35 @@ SQL
 `app/cart/page.tsx:11-12` — `updateCart(previousCart)` の呼び出しを除去し、
 `fetchOrCreateCart` の戻り値（保存済み totals + cartItems）をそのまま表示に使う。
 `CartTotals` / `CartItemsList` へ渡す props の形を合わせる。
+
+**7b — 商品価格変更後のカート再計算**
+
+`utils/actions.ts` の `updateProductAction`（商品更新アクション）内で、
+商品価格が変更された場合（`data.price !== undefined`）に以下の処理を追加する:
+
+1. 価格変更後の `db.product.update()` 呼び出し完了直後に、該当 `productId` を含む
+   `CartItem` を持つ全 Cart を特定する:
+
+   ```ts
+   const affectedCarts = await db.cart.findMany({
+     where: { cartItems: { some: { productId } } },
+     include: { cartItems: { include: { product: true } } },
+   });
+   ```
+
+2. 特定した各 Cart に対して `updateCart(cart, tx)` を呼んで
+   `cartTotal` / `orderTotal` / `numItemsInCart` を再計算・永続化する。
+   この再計算は `updateProductAction` のトランザクション内で実行し、
+   商品更新と合計更新が不可分になるようにする。
+
+3. **表示の一貫性**: `CartItemsList`（カート内商品一覧）と `CartTotals`（合計欄）は
+   ともに `fetchOrCreateCart`（7a で write-on-read を除去済み）の戻り値に依存するため、
+   `updateCart` で永続化した最新の `cartTotal`/`orderTotal` を両コンポーネントが
+   同じデータソースから表示できる。現在価格（変更後の `product.price`）は
+   CartItem の `product.price` として自然に反映される。
+
+**STOP 条件**: `updateProductAction` が存在しない、またはシグネチャが
+「Current state」の記述と一致しない場合は報告する（コードがドリフトした可能性）。
 
 **Verify**: `bun run test` → 全パス、`bunx tsc --noEmit` → exit 0
 

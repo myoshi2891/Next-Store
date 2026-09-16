@@ -18,7 +18,7 @@ STOP conditions を厳守し、完了時に自分の行のステータスを更�
 | [005](005-dx-deps-docs-cleanup.md) | DX・依存関係・ドキュメント整備 | P2 | M | — | TODO |
 | [006](006-product-direction-roadmap.md) | プロダクトロードマップ（設計スパイク束） | P3 | 項目別 | 項目ごとに個別評価（下表参照） | TODO — selected scope: none |
 
-Status values: TODO | IN PROGRESS | DONE | BLOCKED（理由 1 行）| REJECTED（理由 1 行）
+Status values: TODO | IN PROGRESS | DONE | BLOCKED（理由 1 行）| REJECTED（理由 1 行）| NOT SELECTED（意図的に対象外 — Plan 006 の未選択スパイク項目に使用）
 
 ## Plan 006 item selection & status
 
