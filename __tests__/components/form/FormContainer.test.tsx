@@ -1,42 +1,25 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import FormContainer from "@/components/form/FormContainer";
+
+const mockToast = vi.fn();
 
 // useToast のモック
 vi.mock("@/hooks/use-toast", () => ({
-	useToast: () => ({ toast: vi.fn() }),
+	useToast: () => ({ toast: mockToast }),
 }));
 
-// useFormState / useActionState のモック（React バージョンに依存しないテスト）
-vi.mock("react-dom", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("react-dom")>();
-	return {
-		...actual,
-		useFormState: (action: unknown, initialState: unknown) => [
-			initialState,
-			action,
-		],
-	};
-});
-
-vi.mock("react", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("react")>();
-	return {
-		...actual,
-		useActionState: (action: unknown, initialState: unknown) => [
-			initialState,
-			action,
-		],
-	};
-});
-
 describe("FormContainer", () => {
-	const mockAction = vi
-		.fn()
-		.mockResolvedValue({ message: "" }) as unknown as (
+	const mockAction = vi.fn() as unknown as (
 		prevState: { message: string },
 		formData: FormData
 	) => Promise<{ message: string }>;
+
+	beforeEach(() => {
+		mockToast.mockClear();
+		(mockAction as ReturnType<typeof vi.fn>).mockReset();
+	});
 
 	it("children をレンダリングする", () => {
 		render(
@@ -65,5 +48,38 @@ describe("FormContainer", () => {
 		);
 		expect(screen.getByPlaceholderText("名前")).toBeInTheDocument();
 		expect(screen.getByText("保存")).toBeInTheDocument();
+	});
+
+	it("state.message が更新されたら toast が呼ばれる", async () => {
+		(mockAction as ReturnType<typeof vi.fn>).mockResolvedValue({
+			message: "保存しました",
+		});
+		render(
+			<FormContainer action={mockAction}>
+				<button type="submit">送信</button>
+			</FormContainer>
+		);
+
+		await userEvent.click(screen.getByText("送信"));
+
+		await waitFor(() => {
+			expect(mockToast).toHaveBeenCalledWith({ description: "保存しました" });
+		});
+	});
+
+	it("state.message が空のままなら toast は呼ばれない", async () => {
+		(mockAction as ReturnType<typeof vi.fn>).mockResolvedValue({ message: "" });
+		render(
+			<FormContainer action={mockAction}>
+				<button type="submit">送信</button>
+			</FormContainer>
+		);
+
+		await userEvent.click(screen.getByText("送信"));
+
+		await waitFor(() => {
+			expect(mockAction).toHaveBeenCalled();
+		});
+		expect(mockToast).not.toHaveBeenCalled();
 	});
 });

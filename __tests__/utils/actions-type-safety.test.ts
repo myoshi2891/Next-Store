@@ -1,23 +1,23 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, expectTypeOf } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import type { actionFunction } from "../../utils/types";
 
 describe("Server Action の prevState 型安全性", () => {
 	it("actionFunction 型に any が含まれていないこと", () => {
-		const content = readFileSync(
-			resolve(__dirname, "../../utils/types.ts"),
-			"utf-8"
-		);
-		// actionFunction 定義部分を抽出
-		const actionFnMatch = content.match(
-			/export type actionFunction[\s\S]*?;/
-		);
-		expect(actionFnMatch).not.toBeNull();
-		const actionFnDef = actionFnMatch![0];
-		expect(
-			actionFnDef,
-			"actionFunction 型に any が使われています"
-		).not.toContain("any");
+		expectTypeOf<actionFunction>().parameter(0).not.toBeAny();
+		expectTypeOf<actionFunction>().parameter(1).not.toBeAny();
+		expectTypeOf<actionFunction>().returns.not.toBeAny();
+	});
+
+	it("actionFunction の shape が (prevState, formData) => Promise<{ message: string }> であること", () => {
+		expectTypeOf<actionFunction>().parameter(0).toEqualTypeOf<{
+			message: string;
+		}>();
+		expectTypeOf<actionFunction>().parameter(1).toEqualTypeOf<FormData>();
+		expectTypeOf<actionFunction>().returns.toEqualTypeOf<
+			Promise<{ message: string }>
+		>();
 	});
 
 	it("utils/actions.ts の prevState に any が使われていないこと", () => {
@@ -38,10 +38,10 @@ describe("Server Action の prevState 型安全性", () => {
 		}
 	});
 
-	it("FormContainer の initialState と prevState の型が一致する", () => {
+	it("FormContainer の initialState が actionFunction の prevState 型と一致する", () => {
 		const initialState = { message: "" };
-		type InitialStateType = typeof initialState;
-		const prevState: InitialStateType = { message: "previous" };
-		expect(prevState.message).toBe("previous");
+		expectTypeOf(initialState).toEqualTypeOf<
+			Parameters<actionFunction>[0]
+		>();
 	});
 });

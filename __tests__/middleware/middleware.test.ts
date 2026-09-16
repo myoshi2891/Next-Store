@@ -1,30 +1,42 @@
 import { describe, it, expect } from "vitest";
+import { NextRequest } from "next/server";
+import { isPublicRoute, isAdminRoute } from "@/middleware";
+
+function makeRequest(pathname: string) {
+	return new NextRequest(new URL(pathname, "https://example.com"));
+}
 
 describe("middleware ルーティング保護ロジック", () => {
 	const publicRoutes = ["/", "/products", "/products/123", "/about"];
 	const protectedRoutes = ["/cart", "/checkout", "/orders", "/favorites"];
 	const adminRoutes = ["/admin", "/admin/products", "/admin/sales"];
 
-	it("公開ルートが正しく定義されている", () => {
-		const publicPatterns = [/^\/$/, /^\/products/, /^\/about$/];
+	it("公開ルートが isPublicRoute と一致する", () => {
 		for (const route of publicRoutes) {
-			const isPublic = publicPatterns.some((p) => p.test(route));
-			expect(isPublic, `${route} は公開ルートであるべき`).toBe(true);
+			expect(isPublicRoute(makeRequest(route)), `${route} は公開ルートであるべき`).toBe(
+				true
+			);
 		}
 	});
 
-	it("保護ルートが公開ルートに含まれない", () => {
-		const publicPatterns = [/^\/$/, /^\/products/, /^\/about$/];
+	it("保護ルートが isPublicRoute に含まれない", () => {
 		for (const route of protectedRoutes) {
-			const isPublic = publicPatterns.some((p) => p.test(route));
-			expect(isPublic, `${route} は公開ルートであるべきではない`).toBe(false);
+			expect(
+				isPublicRoute(makeRequest(route)),
+				`${route} は公開ルートであるべきではない`
+			).toBe(false);
 		}
 	});
 
-	it("管理者ルートの判定パターンが正しい", () => {
-		const adminPattern = /^\/admin/;
+	it("管理者ルートが isAdminRoute と一致する", () => {
 		for (const route of adminRoutes) {
-			expect(adminPattern.test(route), `${route} は管理者ルート`).toBe(true);
+			expect(isAdminRoute(makeRequest(route)), `${route} は管理者ルート`).toBe(true);
+		}
+	});
+
+	it("公開ルートは isAdminRoute に一致しない", () => {
+		for (const route of publicRoutes) {
+			expect(isAdminRoute(makeRequest(route))).toBe(false);
 		}
 	});
 
