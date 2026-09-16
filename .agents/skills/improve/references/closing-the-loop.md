@@ -12,7 +12,7 @@ The founding rule survives unchanged: **the advisor never edits source code.** I
 
 - The repo is a git repository (worktree isolation requires it). If not: stop and say so.
 - The plan file exists and its dependencies show DONE in `plans/README.md`. If not: stop, name the missing dependency.
-- Run the plan's drift check yourself. If in-scope files changed since `Planned at`, reconcile the plan first (see below) — don't hand a stale plan to an executor.
+- Read the plan's `Planned at` base SHA and run `git diff --stat <planned-at SHA>..HEAD -- <in-scope paths>` yourself before dispatching. Do not rely on an argument-less `git diff --stat`, which only reports working-tree changes and cannot establish drift from the plan's base commit. If in-scope files changed since `Planned at`, reconcile the plan first (see below) — don't hand a stale plan to an executor.
 
 ### Dispatch
 

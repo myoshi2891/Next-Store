@@ -24,10 +24,19 @@ File naming: `plans/NNN-short-slug.md`, numbered in recommended execution order.
 > in `plans/README.md` — unless a reviewer dispatched you and told you they
 > maintain the index.
 >
-> **Drift check (run first)**: `git diff --stat <planned-at SHA>..HEAD -- <in-scope paths>`
-> If any in-scope file changed since this plan was written, compare the
-> "Current state" excerpts against the live code before proceeding; on a
-> mismatch, treat it as a STOP condition.
+> **Drift check (run first)**: Run all three commands:
+>
+> ```sh
+> git diff --stat <planned-at SHA>..HEAD -- <in-scope paths>
+> git diff --stat -- <in-scope paths>
+> git ls-files --others --exclude-standard -- <in-scope paths>
+> ```
+>
+> The first detects committed changes since the plan's base SHA, the second
+> detects a dirty worktree, and the third detects untracked in-scope files. If
+> any command reports an in-scope change, compare the "Current state" excerpts
+> against the live code before proceeding; on a mismatch, treat it as a STOP
+> condition.
 
 ## Status
 
@@ -64,14 +73,17 @@ The facts the executor needs, inlined — never "as discussed" or "see audit":
 
 ## Commands you will need
 
-| Purpose   | Command                  | Expected on success |
-|-----------|--------------------------|---------------------|
-| Install   | `pnpm install`           | exit 0              |
-| Typecheck | `pnpm typecheck`         | exit 0, no errors   |
-| Tests     | `pnpm test -- <filter>`  | all pass            |
-| Lint      | `pnpm lint`              | exit 0              |
+| Purpose   | Command                                      | Expected on success |
+|-----------|----------------------------------------------|---------------------|
+| Install   | `<verified package-manager install command>` | exit 0              |
+| Typecheck | `<verified typecheck command>`               | exit 0, no errors   |
+| Tests     | `<verified test command>`                    | all pass            |
+| Lint      | `<verified lint command>`                    | exit 0              |
 
-(Exact commands from this repo — verified during recon, not guessed.)
+Replace every placeholder with commands verified during recon against this
+repository's actual toolchain. The table must name its package manager and its
+working typecheck, test, and lint commands; never copy these commands from a
+different repository or claim they were verified without running them.
 
 ## Suggested executor toolkit
 
