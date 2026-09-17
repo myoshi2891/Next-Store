@@ -19,9 +19,14 @@
 > 1つ目はベース SHA 以降のコミット済み変更、2つ目はステージ済み未コミット変更、
 > 3つ目は未ステージの変更、4つ目は未追跡の対象領域ファイルを検出する。
 > `git status` 単独では不十分（コミット済みドリフトを検出できない）。
-> Plan 001 による `app/api/payment/route.ts` の認可チェック追加は想定内のドリフト。
-> それ以外で、いずれかのコマンドが Scope 内パスの変更を報告した場合は
-> 「Current state」と比較し、不一致は STOP。
+> Plan 001・Plan 002 の完了により生じる以下の変更は想定内のドリフトとして扱い、
+> STOP しない: `app/api/payment/route.ts` の所有権/認可チェック追加、
+> `createProductAction` の admin 認可チェック追加、レビューの重複投稿・
+> なりすまし対策（`reviewSchema`／`Review` の `@@unique([clerkId, productId])`
+> 制約）、画像バリデーション強化、`renderError` の変更、および Plan 002 が
+> `__tests__/` 配下に追加する characterization テスト。それ以外で、いずれかの
+> コマンドが Scope 内パスの変更を報告した場合は「Current state」と比較し、
+> 不一致は STOP。
 
 ## Status
 
@@ -309,13 +314,32 @@ Option B: 処理中フラグ）が使うフィールドを参照する。その�
     取得し先に保存した等）であることを意味する。この場合は保存済みの値を
     上書きせず、`Order` を再読込して `stripeSessionId`/`checkoutAttempt` を
     最新化してからレスポンスを返す。
-    **作成失敗時**: `stripe.checkout.sessions.create` が例外をスローしても、
-    同じ `idempotencyKey`（`checkout-${orderId}-${checkoutAttempt}`）を保持したまま
-    エラーを呼び出し元に返す（`isPending` のような DB フラグは Option A では
-    使わないため解放処理は不要）。次回リクエストは同じ `idempotencyKey` で
-    再試行され、実際にはセッションが作成済みだった場合は Stripe が同一セッションを
-    返し、未作成だった場合はそのまま新規作成される。冪等キー自体が二重作成を
-    防ぐため、追加の DB ロックは不要。
+    **作成失敗時**: `stripe.checkout.sessions.create` が例外をスローした場合、
+    Stripe SDK の例外種別で「セッションが作成された可能性があるか」を分類し、
+    分類ごとに異なる扱いをする（`checkoutAttempt` を進めて `idempotencyKey` を
+    変えてしまうと、実際には作成済みだったセッションと不整合な新規キーで
+    再試行することになり、孤立したセッションや二重作成を招くため）:
+
+    - **接続不明**（`Stripe.errors.StripeConnectionError` やタイムアウトなど、
+      Stripe にリクエストが到達したか不明な場合）・**Session 作成済みの可能性が
+      ある場合**（`Stripe.errors.StripeAPIError` や 5xx 応答など、Stripe 側で
+      処理が進んだ後にエラーが返った場合）: `checkoutAttempt` を進めず、同じ
+      `idempotencyKey`（`checkout-${orderId}-${checkoutAttempt}`）を保持したまま
+      エラーを呼び出し元に返す（`isPending` のような DB フラグは Option A では
+      使わないため解放処理は不要）。次回リクエストは同じ `idempotencyKey` で
+      再試行され、実際にはセッションが作成済みだった場合は Stripe が同一
+      セッションを返し、未作成だった場合はそのまま新規作成される。冪等キー
+      自体が二重作成を防ぐため、追加の DB ロックは不要。
+    - **確定的な作成失敗**（`Stripe.errors.StripeInvalidRequestError` や
+      `StripeCardError` など、Stripe がリクエストをバリデーション段階で拒否し
+      セッションが作成されなかったことが確定している場合）: セッションは
+      作成されていないため `checkoutAttempt` はそのまま据え置き、同じ
+      `idempotencyKey` を保持したままエラーを呼び出し元に返す（Stripe は
+      確定的なバリデーションエラーを冪等キーに紐付けて保存しないため、
+      呼び出し元が入力を修正すれば同じキーで再試行しても新規リクエストとして
+      扱われる）。このケースは呼び出し元のリクエスト内容に起因するため、
+      `checkoutAttempt` の増加（新しい `idempotencyKey` の発行）は不要かつ
+      無意味である。
     **並行テスト（Option A）**: 同一 `orderId` に対して 2 つのリクエストを同時に
     送るシナリオのユニットテストを `__tests__/api/payment-route.test.ts` に追加し、
     Stripe に渡される `idempotencyKey` が両リクエストで同一であること、および
@@ -474,7 +498,9 @@ Order と Cart の関係が一致しない 400、無効/未許可の origin で 
 - Stripe セッション取得後、**database 更新より前**に `session.metadata.orderId` と
   `session.metadata.cartId` がともに空でない文字列であることを runtime で検証する。
   欠落・空文字列・文字列以外なら 400 を返し、order 更新も cart 削除も行わない。
-- `auth()`（`@clerk/nextjs/server`）で `userId` を取得する。未認証なら 401 を返す。
+- リポジトリの規約（`const { userId } = await auth()`、`utils/actions.ts` 参照）
+  に従い、`@clerk/nextjs/server` の `auth()` を `await` し `userId` を分割代入で
+  取得する。未認証（`userId` が falsy）なら 401 を返す。
   `orderId` の検証後、database 更新より前に `db.order.findUnique` で Order を読み込み、
   存在しない、または `order.clerkId !== userId` の場合は 403 を返し、`db.order.update`
   と `db.cart.delete` のいずれも実行しない（Plan 001 で payment ルートに追加する

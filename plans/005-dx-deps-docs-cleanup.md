@@ -34,12 +34,15 @@
 - `package.json:5-11` — scripts: dev / build / start / lint / test / test:watch。
   `typecheck` なし。`build` は `npx prisma generate && next build`（bun 標準の
   リポジトリで npx を使用 — bun.lock と異なる Prisma を解決し得る）。
-- `package.json` — `"eslint": "^8"`（EOL）、`"axios": "^1.9.0"`、
-  `"zod": "^3.24.3"`（v4 GA だが移行は deferred）、`"tailwindcss": "^3.4.1"`
-  （v4 GA だが移行は deferred）、`"sharp": "^0.34.1"`（import なしだが
-  **Next.js の画像最適化がランタイムで自動使用するため削除禁止**）。
-- `.eslintrc.json` — legacy eslintrc 形式（`extends: "next/core-web-vitals"`）。
-  eslint 9 は flat config（`eslint.config.mjs`）がデフォルト。
+- `package.json` — `"eslint": "^9"`、`"eslint-config-next": "^16.1.6"`、
+  `"axios": "^1.9.0"`、`"zod": "^3.24.3"`（v4 GA だが移行は deferred）、
+  `"tailwindcss": "^3.4.1"`（v4 GA だが移行は deferred）、`"sharp": "^0.34.1"`
+  （import なしだが **Next.js の画像最適化がランタイムで自動使用するため削除禁止**）。
+- `eslint.config.mjs` — 既に flat config が存在し、`eslint-config-next` を
+  `export default nextConfig;` の形で re-export している（`next/core-web-vitals`
+  を直接 import する構成ではない）。`.eslintrc.json` は存在しない。eslint 8→9
+  移行自体は完了済みだが、core-web-vitals ルールが正しく解決されているかは
+  未検証（Step 5 で `eslint --print-config` により確認する）。
 - `app/checkout/page.tsx:3,22` — axios の唯一の使用箇所
   （`axios.post("/api/payment", ...)`）。リポジトリ内に他の HTTP クライアント
   利用なし。
@@ -157,14 +160,18 @@ const data = await res.json();
 
 ### Step 5: eslint 9 + flat config への移行
 
-1. `bun remove eslint && bun add -d eslint@^9`
+1. `bunx eslint --version` で現在のバージョンを確認する。メジャーが 9 未満、
+   または eslint 自体が存在しない場合のみ `bun remove eslint && bun add -d eslint@^9`
+   を実行する。既に 9 系ならこのステップはスキップする（再インストールは
+   `bun.lock` の不要な差分を生むため行わない）。
 2. eslint 9 移行では、既存の設定ファイルの状態を先に確認してから対応を選ぶ:
    - `.eslintrc.json` が存在し `eslint.config.mjs` が**存在しない**場合:
      `.eslintrc.json` を削除し、`eslint.config.mjs` を新規作成する。
-   - `eslint.config.mjs` が**既に存在する**場合（drift check で検出済みの想定）:
-     既存の `eslint.config.mjs` の内容を確認し、`next/core-web-vitals` の
-     flat config が正しく設定されているか検証する。不足があれば追記・修正する。
-     `.eslintrc.json` が共存していれば削除する。
+   - `eslint.config.mjs` が**既に存在する**場合（「Current state」記載の通り、
+     現状はこちら）: 既存の `eslint.config.mjs` の内容を確認し、
+     `next/core-web-vitals` の flat config ルールが正しく解決されているか
+     `npx eslint --print-config` で検証する。不足・誤りがあれば下記の内容に
+     修正する。`.eslintrc.json` が共存していれば削除する。
 
    いずれの場合も最終的な `eslint.config.mjs` の内容:
 
@@ -200,7 +207,8 @@ const data = await res.json();
 `.github/workflows/ci.yml` を新規作成。push / pull_request で:
 
 1. `actions/checkout@v4` でリポジトリを取得
-2. `oven-sh/setup-bun` で bun をセットアップ
+2. `oven-sh/setup-bun@v2`（`actions/checkout@v4` と同様、固定バージョン参照を使う。
+   `main`/`latest` のような可変参照は使わない）で bun をセットアップ
 3. `bun install --frozen-lockfile`
 4. `bunx prisma generate`（型生成のため。DB 接続は不要）
 5. `bun run lint`

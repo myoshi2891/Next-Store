@@ -5,9 +5,22 @@
 > いずれかが発生したら、即座に停止して報告する — 独自判断で回避しないこと。
 > 完了したら `plans/README.md` の該当ステータス行を更新する。
 >
-> **Drift check (最初に実行)**: `git diff --stat 90f91f4..HEAD -- utils/actions.ts utils/schemas.ts utils/supabase.ts app/api/payment/route.ts app/api/confirm/route.ts components/reviews/SubmitReview.tsx prisma/schema.prisma prisma/migrations`
-> in-scope ファイルに変更があれば、「Current state」の抜粋と実コードを比較し、
-> 不一致があれば STOP condition として扱う。
+> **Drift check (最初に実行)**: 以下の 4 コマンドをすべて Scope 記載パス
+> （`utils/actions.ts utils/schemas.ts utils/supabase.ts app/api/payment/route.ts app/api/confirm/route.ts components/reviews/SubmitReview.tsx prisma/schema.prisma prisma/migrations __tests__/security/`）
+> に対して実行する:
+>
+> ```sh
+> git diff --stat 90f91f4..HEAD -- utils/actions.ts utils/schemas.ts utils/supabase.ts app/api/payment/route.ts app/api/confirm/route.ts components/reviews/SubmitReview.tsx prisma/schema.prisma prisma/migrations __tests__/security/
+> git diff --cached --stat -- utils/actions.ts utils/schemas.ts utils/supabase.ts app/api/payment/route.ts app/api/confirm/route.ts components/reviews/SubmitReview.tsx prisma/schema.prisma prisma/migrations __tests__/security/
+> git diff --stat -- utils/actions.ts utils/schemas.ts utils/supabase.ts app/api/payment/route.ts app/api/confirm/route.ts components/reviews/SubmitReview.tsx prisma/schema.prisma prisma/migrations __tests__/security/
+> git ls-files --others --exclude-standard -- utils/actions.ts utils/schemas.ts utils/supabase.ts app/api/payment/route.ts app/api/confirm/route.ts components/reviews/SubmitReview.tsx prisma/schema.prisma prisma/migrations __tests__/security/
+> ```
+>
+> 1つ目はベース SHA 以降のコミット済み変更、2つ目はステージ済み未コミット変更、
+> 3つ目は未ステージの変更、4つ目は未追跡の対象領域ファイルを検出する。
+> `git status` 単独では不十分（コミット済みドリフトを検出できない）。
+> いずれかのコマンドが in-scope ファイルの変更を報告した場合は
+> 「Current state」の抜粋と実コードを比較し、不一致があれば STOP condition として扱う。
 
 ## Status
 
@@ -252,7 +265,10 @@ Step 7 で追加する決済フロー関連テストに、`isPaid: true` の Ord
 - [ ] `bun run test` が exit 0、新規セキュリティテスト 5 件以上を含む
 - [ ] `createProductAction` 内で `getAdminUser()` が呼ばれ、その呼び出しが `db.product.create` より前に実行される（`grep -n "getAuthUser\|getAdminUser\|db.product.create" utils/actions.ts` で該当行の順序を確認し、`getAuthUser` が `createProductAction` 内に含まれないことも合わせて確認する）
 - [ ] `grep -n "authorName" components/reviews/SubmitReview.tsx` が 0 件
-- [ ] `git status` で in-scope 外のファイルに変更がない
+- [ ] Drift check の 4 コマンド（`git diff --stat 90f91f4..HEAD`、`git diff --cached --stat`、
+  `git diff --stat`、`git ls-files --others --exclude-standard`、いずれも同じ in-scope パス指定）
+  のいずれにも in-scope 外のファイルが含まれない（`git status` 単独では
+  コミット済み・ステージ済みドリフトを見落とすため使わない）
 - [ ] `plans/README.md` のステータス行を更新済み
 
 ## STOP conditions

@@ -22,9 +22,16 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED（理由 1 行）| REJECTED�
 
 Plan 006 のこの表での上位 Status は、下表「Plan 006 item selection & status」の
 状態から導出する: 項目が未選択（全項目 `NOT SELECTED`）または未着手なら `TODO`、
-いずれかの選択項目が `IN PROGRESS`（または他の未完了状態）なら `IN PROGRESS`、
-選択された全項目が `DONE` になった時点で `DONE` に更新する。reconcile 実行時は
-下表の状態からこの上位 Status を再計算し、不整合があれば修正する。
+選択された全項目が `DONE` になった時点で `DONE` に更新する。それ以外
+（いずれかの選択項目が `IN PROGRESS`、`BLOCKED`、`STALE`、`REJECTED` など未完了の
+いずれかの状態にある場合）は `IN PROGRESS` のまま維持する — `BLOCKED`/`STALE`/
+`REJECTED` の選択項目があっても上位 Status を止めない。reconcile 実行時は、
+上位 Status を再計算する**前に**下表の各項目（個別化されている場合は対応する
+1xx プラン）の状態を処理し、`BLOCKED`/`STALE` 項目については通常の reconcile
+手順（原因調査・プラン改訂または REJECTED 化）を適用してその停止理由を
+対応する 1xx プランに反映してから、この表の上位 Status を再計算して
+不整合があれば修正する。この規則は Plan 006 自体を executor に渡さない
+既存の reconcile 分岐（個別 1xx プランを作成して dispatch する）を変更しない。
 
 ## Plan 006 item selection & status
 

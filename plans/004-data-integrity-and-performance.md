@@ -146,7 +146,10 @@ SQL
   `db.cartItem.upsert` に書き換える（Step 1 の `@@unique([cartId, productId])` により
   `cartId_productId` 複合キーが where に使える）。同時に、`updateOrCreateCartItem` が
   `addToCartAction` のトランザクション外で呼ばれても動作するよう、オプショナルな
-  トランザクションクライアント引数 `client` を追加しデフォルト値を `db` とする:
+  トランザクションクライアント引数 `client` を追加しデフォルト値を `db` とする。
+  `Prisma.TransactionClient` 型を参照するため、`utils/actions.ts` 冒頭の
+  `import { Cart } from "@prisma/client";` に `Prisma` を追加する
+  （`import { Cart, Prisma } from "@prisma/client";`）:
 
   ```ts
   async function updateOrCreateCartItem(
