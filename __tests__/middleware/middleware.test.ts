@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
-import { isPublicRoute, isAdminRoute } from "@/middleware";
+import { isPublicRoute, isAdminRoute, isAdminUser } from "@/middleware";
 
 function makeRequest(pathname: string) {
 	return new NextRequest(new URL(pathname, "https://example.com"));
@@ -40,17 +40,27 @@ describe("middleware ルーティング保護ロジック", () => {
 		}
 	});
 
-	it("ADMIN_USER_ID による管理者判定ロジック", () => {
-		const adminUserId = "admin_123";
-		const testCases = [
-			{ userId: "admin_123", expected: true },
-			{ userId: "user_456", expected: false },
-			{ userId: null, expected: false },
-		];
+	describe("ADMIN_USER_ID による管理者判定ロジック", () => {
+		const originalAdminUserId = process.env.ADMIN_USER_ID;
 
-		for (const { userId, expected } of testCases) {
-			const isAdmin = userId === adminUserId;
-			expect(isAdmin).toBe(expected);
-		}
+		beforeEach(() => {
+			process.env.ADMIN_USER_ID = "admin_123";
+		});
+
+		afterEach(() => {
+			process.env.ADMIN_USER_ID = originalAdminUserId;
+		});
+
+		it("ADMIN_USER_ID と一致する userId を管理者と判定する", () => {
+			expect(isAdminUser("admin_123")).toBe(true);
+		});
+
+		it("ADMIN_USER_ID と一致しない userId は管理者と判定しない", () => {
+			expect(isAdminUser("user_456")).toBe(false);
+		});
+
+		it("userId が null の場合は管理者と判定しない", () => {
+			expect(isAdminUser(null)).toBe(false);
+		});
 	});
 });

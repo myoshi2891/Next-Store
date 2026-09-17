@@ -4,11 +4,14 @@ import { NextResponse } from "next/server";
 export const isPublicRoute = createRouteMatcher(["/", "/products(.*)", "/about"]);
 export const isAdminRoute = createRouteMatcher(["/admin(.*)"]);
 
+export function isAdminUser(userId: string | null) {
+	return userId === process.env.ADMIN_USER_ID;
+}
+
 export default clerkMiddleware(async (auth, req) => {
 	const { userId } = await auth();
-	const isAdminUser = userId === process.env.ADMIN_USER_ID;
 
-	if (isAdminRoute(req) && !isAdminUser) {
+	if (isAdminRoute(req) && !isAdminUser(userId)) {
 		return NextResponse.redirect(new URL("/", req.url));
 	}
 
