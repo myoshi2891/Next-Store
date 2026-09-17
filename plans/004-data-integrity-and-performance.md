@@ -178,7 +178,7 @@ SQL
   await db.$transaction(async (tx) => {
     const cart = await tx.cart.findFirst({ where: { clerkId: userId }, include: includeProductClause });
     if (!cart) throw new Error("Cart not found");
-    await updateOrCreateCartItem(cartId, productId, amount, tx);
+    await updateOrCreateCartItem(cart.id, productId, amount, tx);
     await updateCart(cart, tx);
   }, { isolationLevel: "Serializable" });
   ```
@@ -192,8 +192,11 @@ SQL
 
   **シリアライズ失敗時の再試行**: PostgreSQL が直列化失敗（`P2034` /
   `SQLSTATE 40001`）を返した場合は安全に再試行できる。呼び出し箇所を
-  `for (let i = 0; i < 3; i++)` のループで包み、`P2034` なら continue、
-  それ以外は throw するパターンを実装する。
+  `for (let i = 0; i < 3; i++)` のループで包み、トランザクションが成功したら
+  `break`/`return` で即座にループを抜ける。`P2034`（または `SQLSTATE 40001`）の
+  場合のみ次のイテレーションへ `continue` し、それ以外のエラーは即座に `throw`
+  する。成功後もループを継続する実装は、`CartItem` の increment や集計値の更新が
+  複数回適用される不整合を招くため避けること。
 
   **Serializable を利用できない環境向けのフォールバック**:
   Supabase PgBouncer のトランザクションプーリングモード等で Serializable が

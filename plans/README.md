@@ -30,7 +30,7 @@ DONE; unselected items do not block completion.
 | Item | Title | Selected | Status | Notes |
 |------|-------|----------|--------|-------|
 | 6-1 | Stripe Webhook による決済確定 | No | NOT SELECTED | Requires Plan 003 |
-| 6-2 | 注文詳細ページ | No | NOT SELECTED | — |
+| 6-2 | 注文詳細ページ | No | NOT SELECTED | Requires Plan 003 |
 | 6-3 | 注文確認メール | No | NOT SELECTED | Prefer after 6-1 |
 | 6-4 | 管理ダッシュボードの実体化 | No | NOT SELECTED | — |
 | 6-5 | レビュー編集 | No | NOT SELECTED | — |

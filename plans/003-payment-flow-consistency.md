@@ -170,7 +170,19 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
 **STOP 条件**: 両 Option とも実装途中で想定外の状態（例: 複数 Cart が同一 Order に
 紐づいている等）を検出したら、ロールバックして報告すること。
 
-**Verify**: `bunx prisma generate` → exit 0（`OrderItem` 型が生成されること）
+**Checkout Session 重複防止フィールド（Step 4 で選択する Option を先取りして追加）**:
+Step 3 の未払い Order 削除条件は、Step 4 で選択する重複防止方式（Option A: 冪等キー /
+Option B: 処理中フラグ）が使うフィールドを参照する。そのため Step 4 で選ぶ方針を
+このステップで決め、対応するフィールドを `Order` モデルに追加してマイグレーションを
+生成すること（Step 4 では新規フィールド追加を行わず、このステップで追加済みのものを使う）:
+
+- Step 4 で **Option A**（冪等キー）を選ぶ場合: `stripeSessionId String?` と
+  `checkoutAttempt Int @default(0)` を追加する。
+- Step 4 で **Option B**（処理中フラグ）を選ぶ場合: `isPending Boolean @default(false)` と
+  `stripeSessionId String?` を追加する。
+
+**Verify**: `bunx prisma generate` → exit 0（`OrderItem` 型と、選択した Option の
+フィールド（`stripeSessionId` / `checkoutAttempt` または `isPending`）が生成されること）
 
 ### Step 3: createOrderAction で合計を再計算する
 
@@ -182,15 +194,17 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
   `shipping` だけを使う。再計算と Order 作成の間に別リクエストの変更を取り込まないこと。
   Step 2 で追加した Cart-to-Order 関係を使い、作成する Order に現在の Cart を接続して
   `cartId` を永続化する。
-- **未払い Order 削除の除外条件（Step 4 で Option B を選択した場合）**: 削除対象の
-  `where` に `isPending: false` を追加し、`isPending: true` かつ `stripeSessionId` が
-  非 null の Order（Stripe Checkout が進行中）は削除しない。このような Order が
+- **未払い Order 削除の除外条件（Step 4 の Option A・B いずれを選択した場合も適用）**:
+  削除対象の `where` に、Option B（`isPending` フィールドあり）なら `isPending: false` を、
+  Option A（`isPending` フィールドを持たない）なら `stripeSessionId: null` を追加し、
+  Stripe Checkout が進行中の Order（Option B は `isPending: true` かつ `stripeSessionId`
+  非 null、Option A は `stripeSessionId` 非 null）を削除しない。このような Order が
   存在する場合は、`stripe.checkout.sessions.retrieve(stripeSessionId)` で状態を確認し、
   `status === 'open'` なら既存 Order と Cart 接続をそのまま再利用して redirect する
   （新規 Order を作らない）。`status` が `'expired'`/`'complete'` 以外の中断状態であれば
   Stripe 側のセッションを安全に終了させてから通常の削除・再作成フローに進む。
   こうすることで、confirm ルートが後から参照する Order を削除して外部キー・404 エラーを
-  起こす事態を防ぐ。Step 4 で Option A（冪等キーのみ）を選択した場合はこの分岐は不要。
+  起こす事態を防ぐ。
 - `updateCart` の再計算と Order 作成を含むトランザクションが、confirm ルートの
   `isPaid` 更新や別リクエストの `createOrderAction` と競合しないことを検証する
   並行実行テストを `__tests__/utils/order-actions.test.ts` に追加する。
@@ -228,8 +242,8 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
   ネットワーク再試行やページリロードで同一 Order に対して payment ルートが複数回
   呼ばれると、Stripe に複数の Checkout Session が作成される可能性がある。
   この問題を本 Step で解消するために、以下の **2 つのアプローチのいずれかを選択**する:
-  - **Option A — Stripe 冪等キー（推奨）**: `Order` に `stripeSessionId String?` と
-    `checkoutAttempt Int @default(0)` を追加し（要マイグレーション）、
+  - **Option A — Stripe 冪等キー（推奨）**: `Order` の `stripeSessionId String?` と
+    `checkoutAttempt Int @default(0)`（Step 2 で追加済み）を使い、
     `stripe.checkout.sessions.create` の第 2 引数に
     `{ idempotencyKey: \`checkout-${orderId}-${checkoutAttempt}\` }` を渡す。
     冪等キーは Stripe 側で**最低 24 時間**保持され、同一キーでの再リクエストには
@@ -247,10 +261,24 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
     3. `status === 'complete'` の場合は明示的な終端ケースとして扱う。`create` は
        呼ばず、`isPaid` がまだ `false` なら既存の決済確定処理（confirm ルート）へ
        委譲するか、再 Checkout 不可のエラーを返す。新規セッションを作成しない。
-    4. `status === 'expired'` と確認できた場合のみ、`stripeSessionId` を `null` に戻し
-       `checkoutAttempt` をインクリメントしてから新しい `idempotencyKey`
-       （`checkout-${orderId}-${checkoutAttempt + 1}`）で新規セッションを作成する。
-       `expired` を確認する前に冪等キーを変えて新規作成しない。
+    4. `status === 'expired'` と確認できた場合のみ、手順 1 で読み取った
+       `stripeSessionId` と `checkoutAttempt` の値を `where` に含めた**アトミック**な
+       条件付き更新でリセットする:
+
+       ```ts
+       const reset = await db.order.updateMany({
+         where: { id: orderId, stripeSessionId: readStripeSessionId, checkoutAttempt: readCheckoutAttempt },
+         data: { stripeSessionId: null, checkoutAttempt: { increment: 1 } },
+       });
+       ```
+
+       `reset.count === 1` の場合のみ、新しい `idempotencyKey`
+       （`checkout-${orderId}-${readCheckoutAttempt + 1}`）で新規セッションを作成する。
+       `reset.count === 0` の場合は、別リクエストが同じ Order を先にリセット・再作成済み
+       であることを意味するため、新規作成せず Order を再読込して手順 1 からやり直す
+       （読み取った値が古いまま新規セッションを作成し、他リクエストが直前に保存した
+       有効な `stripeSessionId` を上書きする事態を防ぐ）。`expired` を確認する前に
+       冪等キーを変えて新規作成しない。
     作成に成功したら `session.id` を `stripeSessionId` に保存する。
     **作成失敗時**: `stripe.checkout.sessions.create` が例外をスローしても、
     同じ `idempotencyKey`（`checkout-${orderId}-${checkoutAttempt}`）を保持したまま
@@ -263,8 +291,8 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
     送るシナリオのユニットテストを `__tests__/api/payment-route.test.ts` に追加し、
     Stripe に渡される `idempotencyKey` が両リクエストで同一であること、および
     両リクエストが同じ `session.id` を受け取ることを検証する。
-  - **Option B — Order の処理中フラグ**: `Order` モデルに `isPending Boolean @default(false)`
-    フィールドと `stripeSessionId String?` フィールドを追加し（要マイグレーション）、
+  - **Option B — Order の処理中フラグ**: `Order` モデルの `isPending Boolean @default(false)`
+    フィールドと `stripeSessionId String?` フィールド（Step 2 で追加済み）を使い、
     セッション作成前に以下の**アトミック**な更新で「処理中」予約を確保する:
 
     ```ts
