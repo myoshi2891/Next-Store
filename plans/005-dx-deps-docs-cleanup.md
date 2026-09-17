@@ -117,15 +117,17 @@
 **実際の値・実在の URL・実在の ID は絶対に書かない。**
 
 **Verify**:
-1. `test -f .env.example && ! grep -nE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=[^[:space:]].*$' .env.example` → exit 0
+1. `test -f .env.example && ! grep -nE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=[[:space:]]*[^[:space:]#].*$' .env.example` → exit 0
    （`test -f` でファイルの存在を先に必須化する — 存在しない場合は `grep` が
    「非0終了かつ0件ヒット」を返し `!` 否定で見かけ上パスしてしまうため、存在チェックを
-   先に置いて検証をすり抜けさせない。コメントと空の代入は許可し、`KEY=x` を含む
-   任意の非空値のみ検出する）
+   先に置いて検証をすり抜けさせない。`=` の直後に空白/タブを挟んでも値が続くケース
+   （例: `KEY= value`）を見逃さないよう `=` 後の空白を許容しつつ、その次の非空白文字が
+   `#` の場合のみコメント/空値として許可する。コメントと空の代入は許可し、値本体を
+   含む行のみ検出する）
 2. 「Current state」に列挙した 10 個のキーがすべて存在することをキー単位で確認する:
-   `for k in DATABASE_URL DIRECT_URL SUPABASE_URL SUPABASE_KEY ADMIN_USER_ID STRIPE_SECRET_KEY NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY CLERK_SECRET_KEY APP_URL; do grep -q "^${k}=" .env.example || echo "MISSING: $k"; done`
-   → 出力が空（全キーが空値またはコメント付きで存在すること。値が空欄なのは許可、
-   欠落しているキーのみ `MISSING` として検出する）
+   `missing=0; for k in DATABASE_URL DIRECT_URL SUPABASE_URL SUPABASE_KEY ADMIN_USER_ID STRIPE_SECRET_KEY NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY CLERK_SECRET_KEY APP_URL; do grep -q "^${k}=" .env.example || { echo "MISSING: $k"; missing=1; }; done; exit $missing`
+   → exit 0 かつ出力が空（全キーが空値またはコメント付きで存在すること。値が空欄なのは許可、
+   欠落しているキーのみ `MISSING` として検出し、1件でも欠落があれば非0で終了する）
 
 ### Step 3: README の記載を実態に合わせる
 
@@ -170,7 +172,7 @@ const data = await res.json();
    - `eslint.config.mjs` が**既に存在する**場合（「Current state」記載の通り、
      現状はこちら）: 既存の `eslint.config.mjs` の内容を確認し、
      `next/core-web-vitals` の flat config ルールが正しく解決されているか
-     `npx eslint --print-config` で検証する。不足・誤りがあれば下記の内容に
+     `bunx eslint --print-config` で検証する。不足・誤りがあれば下記の内容に
      修正する。`.eslintrc.json` が共存していれば削除する。
 
    いずれの場合も最終的な `eslint.config.mjs` の内容:
@@ -187,7 +189,7 @@ const data = await res.json();
 3. `bun run lint` を実行し、新たに報告されるエラーを確認する。
    **新規エラーが 10 件を超える場合は修正せず STOP して一覧を報告**
    （ルール調整の判断が必要）。10 件以下の機械的修正（未使用変数等）は行ってよい。
-4. `npx eslint --print-config app/layout.tsx` および任意の既存 `.tsx` ファイル
+4. `bunx eslint --print-config app/layout.tsx` および任意の既存 `.tsx` ファイル
    （例: `components/navbar/Navbar.tsx`）に対して実行し、TypeScript/TSX 用の
    パーサー・ルールが解決されていることを確認する（エラー終了は STOP）。
 

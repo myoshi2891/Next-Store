@@ -161,10 +161,21 @@ Clerk は `vi.mock("@clerk/nextjs/server")` で `auth`/`currentUser` をモッ�
 
 `__tests__/utils/schemas.test.ts` を作成:
 
-- `imageSchema`（`validateImageFile` への委譲を網羅）:
-  - サイズ: 1MB 超のファイルで失敗、1MB ちょうどおよびそれ以下で成功
+- `imageSchema`（`validateImageFile` への委譲を網羅）。以下の「サイズ」「許可 MIME」
+  ケースは Plan 001 が導入するマジックバイト検証・実デコード検証（`sharp`/
+  `image-size`）を通過する必要があるため、MIME 宣言だけでなく実際にデコード可能な
+  最小フィクスチャを使う（例: 1x1 の最小 PNG/GIF、最小の有効 JPEG/WebP を各形式
+  1つずつ用意する）:
+  - サイズ: 上記の有効フィクスチャの末尾（PNG の IEND チャンク後、JPEG の EOI
+    マーカー `0xFFD9` 後、GIF のトレーラ `0x3B` 後 — デコーダが無視する末尾領域）
+    にパディングバイトを追加して 1MB 超・1MB ちょうど・1MB 未満の3ケースを作る
+    （WebP は RIFF チャンクサイズフィールドと整合しないパディングだとデコードに
+    失敗し得るため、末尾パディングではなく余白用チャンクの追加、またはこの形式は
+    サイズ境界ケースの対象から外し許可 MIME ケースの最小フィクスチャのみとする）。
+    1MB 超は失敗、1MB ちょうどおよびそれ以下は成功することを検証する。
   - 許可 MIME: Plan 001 が導入する許可リスト（`image/jpeg`, `image/png`,
-    `image/webp`, `image/gif`）の 4 種類のみ成功する
+    `image/webp`, `image/gif`）それぞれについて対応する最小有効フィクスチャを渡し、
+    4 種類のみ成功することを検証する
   - 拒否 MIME: `image/svg+xml`, `image/avif` 等その他の `image/*` および
     `application/pdf` 等の非画像 MIME はすべて拒否される
   - **MIME スプーフィング**: `type: "image/jpeg"` と宣言しつつ実際のバイト列は

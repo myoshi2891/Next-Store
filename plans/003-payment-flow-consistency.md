@@ -428,12 +428,16 @@ Option B: 処理中フラグ）が使うフィールドを参照する。その�
     上記の条件付き解放は維持すること**。この不確定リスクを避けたい場合は
     Option A（冪等キー）を選ぶこと。
 
-    **決済キャンセル・期限切れ時の回収**: Stripe Checkout Session が
-    ユーザーによってキャンセルされるか `expires_at` を超過した場合、
-    Webhook（Plan 006 Step 1）で `checkout.session.expired` イベントを受け取り、
-    上記と同様の条件付き更新で `isPending: false` / `stripeSessionId: null` に戻す。
-    Plan 006 が未実装の場合は、payment ルートの既存セッション確認時に
-    `status === 'expired'` を検出した段階でインラインで回収する（上記の回収手順）。
+    **決済期限切れ時の回収**: return_url に戻ってきたユーザーが決済を完了せず
+    ページを離れただけの場合（いわゆる「キャンセル」）、Checkout Session は
+    `expires_at` に達するまで `open` のままであるため、上記の既存セッション確認
+    ロジック（`status === 'open'` なら既存の `clientSecret` をそのまま返す）が
+    適用され、リセットは不要かつ行ってはならない。Stripe 側が `expires_at` 超過で
+    セッションを `expired` へ遷移させた場合に限り、Webhook（Plan 006 Step 1）で
+    `checkout.session.expired` イベントを受け取り、上記と同様の条件付き更新で
+    `isPending: false` / `stripeSessionId: null` に戻す。Plan 006 が未実装の場合は、
+    payment ルートの既存セッション確認時に `status === 'expired'` を検出した段階で
+    インラインで回収する（上記の回収手順）。
 
     **Step 5 のクリーンアップ（Option B のみ）**: confirm ルート（Step 5）で
     `isPaid: true` にする際に `isPending: false` に戻す
