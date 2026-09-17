@@ -73,13 +73,13 @@ Every finding needs: evidence (`file:line` references), impact, effort estimate 
 
 Present the vetted findings table to the user, ordered by leverage (impact ÷ effort, weighted by confidence):
 
-| # | Finding | Category | Impact | Effort | Risk | Evidence |
+| # | Finding | Category | Impact | Effort | Risk | Confidence | Fix sketch | Evidence |
 
 Present **direction findings separately**, after the table — they're options for the maintainer to weigh, not problems ranked against bugs, and burying "build a plugin system" under "fix the N+1" serves neither. 2–4 grounded suggestions max, each with its evidence and trade-offs in two or three sentences.
 
 Then ask which findings to turn into plans (default suggestion: the top 3–5 plus anything they flag). Also surface **dependency ordering** — e.g. "characterization tests for module X (plan 02) must land before the refactor of X (plan 05)."
 
-Wait for the selection. Do not write 30 plans nobody asked for. If running non-interactively (no user available to choose), write plans for the top 3–5 by leverage and record that default in `<chosen-dir>/README.md`.
+Wait for the selection. Do not write 30 plans nobody asked for. If running non-interactively (no user available to choose), select the top 3–5 by leverage as the default and carry that selection into Phase 4, where it is recorded in `<chosen-dir>/README.md` once the directory is chosen.
 
 ### Phase 4 — Write the plans
 
