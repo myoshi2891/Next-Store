@@ -48,7 +48,11 @@ describe("middleware ルーティング保護ロジック", () => {
 		});
 
 		afterEach(() => {
-			process.env.ADMIN_USER_ID = originalAdminUserId;
+			if (originalAdminUserId === undefined) {
+				delete process.env.ADMIN_USER_ID;
+			} else {
+				process.env.ADMIN_USER_ID = originalAdminUserId;
+			}
 		});
 
 		it("ADMIN_USER_ID と一致する userId を管理者と判定する", () => {

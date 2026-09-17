@@ -34,7 +34,7 @@ describe("Server Action の prevState 型安全性", () => {
 			expect(
 				line,
 				`actions.ts: "${line.trim()}" で prevState: any が使われています`
-			).not.toContain("prevState: any");
+			).not.toMatch(/prevState\s*:\s*any/);
 		}
 	});
 
