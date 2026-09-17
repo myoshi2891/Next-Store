@@ -5,7 +5,7 @@
 > いずれかが発生したら、即座に停止して報告する — 独自判断で回避しないこと。
 > 完了したら `plans/README.md` の該当ステータス行を更新する。
 >
-> **Drift check (最初に実行)**: `git diff --stat 90f91f4..HEAD -- utils/actions.ts utils/schemas.ts utils/supabase.ts app/api/payment/route.ts app/api/confirm/route.ts components/reviews/SubmitReview.tsx`
+> **Drift check (最初に実行)**: `git diff --stat 90f91f4..HEAD -- utils/actions.ts utils/schemas.ts utils/supabase.ts app/api/payment/route.ts app/api/confirm/route.ts components/reviews/SubmitReview.tsx prisma/schema.prisma prisma/migrations`
 > in-scope ファイルに変更があれば、「Current state」の抜粋と実コードを比較し、
 > 不一致があれば STOP condition として扱う。
 
