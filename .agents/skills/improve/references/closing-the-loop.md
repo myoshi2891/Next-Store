@@ -28,7 +28,7 @@ The subagent prompt must contain:
 > moving on. Touch only the files listed as in scope. If any STOP condition
 > occurs, stop immediately and report. Do not improvise around obstacles.
 > Commit your work in the worktree following the plan's git workflow section.
-> One override: SKIP the plan's instruction to update `plans/README.md` —
+> One override: SKIP the plan's instruction to update `<chosen-dir>/README.md` —
 > your reviewer maintains the index. Before reporting, audit every claim in
 > your report against an actual tool result from this session — only report
 > what you can point to evidence for; if a verification failed or was
@@ -94,7 +94,7 @@ Finish with a short report: what's verified done, what was refreshed, what's rej
 Modifier on any planning invocation (`/improve --issues`, `/improve security --issues`). The flag is the user's authorization to create issues — never create them without it.
 
 1. Preflight: `gh auth status` succeeds and the repo has a GitHub remote. If either fails, write the plan files as normal and say why issues were skipped.
-2. Visibility check: `gh repo view --json visibility`. If the repo is **public**, warn the user that issues are publicly visible and get explicit confirmation before publishing any plan that describes a security vulnerability, credential location, or other sensitive finding.
+2. Visibility check: `gh repo view --json visibility`. If the repo is **public**, warn the user that issues are publicly visible and get explicit confirmation before publishing any plan that describes a security vulnerability, credential location, or other sensitive finding. In a non-interactive session, confirmation cannot be obtained: skip creating an issue for any such sensitive plan, keep its plan file in place, and report the skip and its reason to the user. Never call `gh issue create` for a sensitive plan without that explicit confirmation.
 3. Show the list of titles about to become issues; confirm once if interactive.
 4. Per plan: `gh issue create --title "<plan title>" --body-file <plan file>`. Labels: `improve` plus the category — apply only if the labels exist or can be created without erroring; skip labels rather than fail.
 5. Record each issue URL in the plan's Status block (`- **Issue**: <url>`) and the index.
