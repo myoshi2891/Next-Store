@@ -127,18 +127,21 @@ SQL
 
 ### Step 4: check-then-act を upsert に置換
 
-- `fetchOrCreateCart` の `errorOnFailure` 契約を**維持**しながら並行安全にする:
-  - `errorOnFailure: true`（または省略時のデフォルト）の呼び出しでは、既存の
+- `fetchOrCreateCart` の `errorOnFailure` 契約を**維持**しながら並行安全にする。
+  現行実装のデフォルトは `errorOnFailure = false` であり、この既定値は変更しない:
+  - `errorOnFailure: true` の呼び出しでは、既存の
     `findFirst` → 未存在時に例外スロー、という既存の分岐をそのまま残す
     （Cart を新規作成しない経路）。
-  - `errorOnFailure: false`（または明示的に作成を許可する呼び出し）では、
+  - `errorOnFailure: false`（省略時のデフォルト）では、
     `db.cart.upsert({ where: { clerkId: userId }, create: { clerkId: userId }, update: {}, include: includeProductClause })`
     に置き換える。Step 1 の `@@unique([clerkId])` と組み合わせることで、
     同一ユーザーの Cart 作成を並行リクエストでも 1 件に保つ一次対策になる。
   - `addToCartAction` は `fetchOrCreateCart({ userId: user.id })` と呼んでいる
-    （`errorOnFailure` 未指定）。この呼び出しを **`errorOnFailure: false`** へ
-    変更するか、`createOrderAction` の注文作成フローが空の Cart を作成しないことを
-    確認してから変更する。`addToCartAction` のトランザクション化だけに依存しない。
+    （`errorOnFailure` 未指定）。この呼び出しに **`errorOnFailure: false`** を
+    明示的に渡すよう変更する。
+  - `createOrderAction` は既に `fetchOrCreateCart({ userId: user.id, errorOnFailure: true })`
+    を呼んでいる（`utils/actions.ts:567-570`）。この呼び出しは変更しない
+    （空の Cart を新規作成せず、既存の findFirst → 例外スロー経路を維持する）。
 - `utils/actions.ts` の `updateOrCreateCartItem`（414-447）を
   `db.cartItem.upsert` に書き換える（Step 1 の `@@unique([cartId, productId])` により
   `cartId_productId` 複合キーが where に使える）。同時に、`updateOrCreateCartItem` が

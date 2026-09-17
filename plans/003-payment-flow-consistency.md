@@ -236,12 +236,18 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
     最初のセッションがそのまま返る。ただし Checkout Session 自体は 24 時間以内に
     `expired` になり得るため、同じキーを使い続けると期限切れセッションが返り続ける
     リスクがある。そこで再リクエスト時は次の手順を踏む:
+    0. Stripe を呼び出す前に `order.isPaid` を判定する。`true` なら Stripe 呼び出し・
+       `create` はいずれも行わず、支払い済みである旨のエラー（再 Checkout 不可）を
+       返して終了する。
     1. `stripeSessionId` が保存済みなら、まず
        `stripe.checkout.sessions.retrieve(stripeSessionId)` で現在の状態を取得する
        （新規 `create` 呼び出しより先に行う）。
     2. `status === 'open'` ならそのセッションをそのまま再利用し `clientSecret` を返す。
        新しい `create` は呼ばない。
-    3. `status === 'expired'` と確認できた場合のみ、`stripeSessionId` を `null` に戻し
+    3. `status === 'complete'` の場合は明示的な終端ケースとして扱う。`create` は
+       呼ばず、`isPaid` がまだ `false` なら既存の決済確定処理（confirm ルート）へ
+       委譲するか、再 Checkout 不可のエラーを返す。新規セッションを作成しない。
+    4. `status === 'expired'` と確認できた場合のみ、`stripeSessionId` を `null` に戻し
        `checkoutAttempt` をインクリメントしてから新しい `idempotencyKey`
        （`checkout-${orderId}-${checkoutAttempt + 1}`）で新規セッションを作成する。
        `expired` を確認する前に冪等キーを変えて新規作成しない。

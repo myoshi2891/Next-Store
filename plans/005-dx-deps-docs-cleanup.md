@@ -199,12 +199,13 @@ const data = await res.json();
 
 `.github/workflows/ci.yml` を新規作成。push / pull_request で:
 
-1. `oven-sh/setup-bun` で bun をセットアップ
-2. `bun install --frozen-lockfile`
-3. `bunx prisma generate`（型生成のため。DB 接続は不要）
-4. `bun run lint`
-5. `bun run typecheck`
-6. `bun run test`
+1. `actions/checkout@v4` でリポジトリを取得
+2. `oven-sh/setup-bun` で bun をセットアップ
+3. `bun install --frozen-lockfile`
+4. `bunx prisma generate`（型生成のため。DB 接続は不要）
+5. `bun run lint`
+6. `bun run typecheck`
+7. `bun run test`
 
 DB・Clerk・Stripe の実キーは不要な構成にする（テストはすべてモック済みの前提。
 もしテストが環境変数を要求して落ちる場合はダミー値を env に設定するのではなく

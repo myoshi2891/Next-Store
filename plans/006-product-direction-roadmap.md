@@ -11,10 +11,10 @@
 > **Drift check (最初に実行)**: 以下の 4 コマンドをすべて実行する:
 >
 > ```sh
-> git diff --stat 90f91f4..HEAD -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md next.config.mjs
-> git diff --cached --stat -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md next.config.mjs
-> git diff --stat -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md next.config.mjs
-> git ls-files --others --exclude-standard -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md next.config.mjs
+> git diff --stat 90f91f4..HEAD -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md plans/003-payment-flow-consistency.md next.config.mjs
+> git diff --cached --stat -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md plans/003-payment-flow-consistency.md next.config.mjs
+> git diff --stat -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md plans/003-payment-flow-consistency.md next.config.mjs
+> git ls-files --others --exclude-standard -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md plans/003-payment-flow-consistency.md next.config.mjs
 > ```
 >
 > 1つ目はベース SHA 以降のコミット済み変更、2つ目はステージ済み未コミット変更、
@@ -27,7 +27,10 @@
 - **Priority**: P3（ただし 6-1 は決済信頼性に直結するため実質 P2）
 - **Effort**: 項目ごとに記載（粗い見積もり）
 - **Risk**: 項目ごとに記載
-- **Depends on**: 6-1 は plans/003 完了後に着手すること（同じコードを触る）
+- **Depends on**: 6-1 は plans/003 完了後に着手すること（同じコードを触る）。
+  6-2 も plans/003 完了後に着手すること — plans/003 Step 2〜4 が `OrderItem`
+  スキーマの追加（Step 2）と `createOrderAction`／`app/api/payment/route.ts`
+  への統合（Step 3・4）を先行実装するため（下記 6-2 参照）。
 - **Category**: direction
 - **Planned at**: commit `90f91f4`, 2026-07-05
 - **Selection policy**: 実施する項目を README の表で `Selected: Yes` にしてから開始する。
@@ -63,20 +66,30 @@
 
 ### 6-2. 注文詳細ページ（CRUD の欠けた 1 辺）
 
+> **前提**: plans/003（決済フロー整合性）の Step 2 が `OrderItem` モデルの
+> 追加、Step 3・4 が `createOrderAction`／`app/api/payment/route.ts` への
+> 統合を**先行実装する**（product スナップショット方式で `productId`/
+> `productName`/`quantity`/`unitPrice` を保存）。着手時点で plans/003 が
+> 完了しているか確認し、
+> `prisma/schema.prisma` と `utils/actions.ts` の `createOrderAction` を実際に
+> 読んで `OrderItem` の有無・スキーマ形状を確認してから本スパイクを進めること。
+> plans/003 未完了の場合は STOP し、順序を確認する。
+
 - **Evidence**: `app/orders/` は `page.tsx`（一覧）と `loading.tsx` のみで
   `[id]/` ルートがない。admin 商品には詳細/編集ルートが揃っている
   （`app/admin/products/[id]/edit`）のと非対称。注文一覧から個別注文への
   リンクも存在しない。
 - **Value**: 顧客が注文の明細（何を・いくつ・いくらで）を確認できない。
-  ※ 現状 `Order` モデルは集計値のみで**明細行を持たない**
-  （`prisma/schema.prisma:81-92` — products は個数の Int）。明細表示には
-  `OrderItem` モデルの追加が必要 — これがこのスパイクの主設計項目。
-- **Effort**: M（OrderItem 追加を含む）/ **Risk**: LOW-MED（スキーマ拡張）
-- **スパイクの成果物**: `OrderItem` スキーマ案（product スナップショット方式 —
-  価格改定に耐えるよう注文時点の価格・商品名を複製保存するか、Product 参照に
-  するかの決定）、`createOrderAction` の拡張方針、`app/orders/[id]/page.tsx` の
-  所有権ガード設計（`clerkId` 照合）。
-- **Open questions**: 過去注文（明細なし）の表示互換をどうするか。
+  plans/003 により `OrderItem`（明細行）は追加済みの前提だが、それを表示する
+  `[id]/` ルートが存在しない — これがこのスパイクの主対象。
+- **Effort**: S-M（スキーマ拡張は plans/003 が担当済みのため、本スパイクは
+  ページ実装の設計のみ）/ **Risk**: LOW（読み取り専用ページ）
+- **スパイクの成果物**: 既存 `OrderItem` スキーマ（plans/003 実装分）の実際の
+  形状調査結果、`app/orders/[id]/page.tsx` の表示設計（明細行の描画、価格
+  フォーマット）、所有権ガード設計（`clerkId` 照合）。`OrderItem` モデル自体の
+  新規設計はスコープ外（plans/003 が既に決定・実装済み）。
+- **Open questions**: plans/003 着手前に作成された過去注文（`OrderItem` なし）
+  の表示互換をどうするか。
 
 ### 6-3. 注文確認メール（取得済みデータの未活用）
 

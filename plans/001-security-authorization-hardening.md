@@ -120,7 +120,19 @@ await db.favorite.delete({
 確認する。
 
 `utils/actions.ts:249-269` を変更:
-1. `validatedFields` から `authorName`/`authorImageUrl` を使わず、認証済み `user` から導出する（`user.firstName ?? "user"`、`user.imageUrl`）。
+1. `db.review.create` の `data` で `...validatedFields` に頼らず、`authorName`/`authorImageUrl` を認証済み `user` から明示的に設定する:
+
+   ```ts
+   await db.review.create({
+       data: {
+           ...validatedFields,
+           clerkId: user.id,
+           authorName: user.firstName ?? "user",
+           authorImageUrl: user.imageUrl,
+       },
+   });
+   ```
+
 2. `findExistingReview` は表示制御のために残してよいが、作成可否の唯一の防御にはしない。`db.review.create` の `P2002`（`clerkId` と `productId` の複合ユニーク制約違反）をアクション内で捕捉し、`{ message: "You have already reviewed this product" }` を返す。ほかのエラーは従来どおり `renderError` に渡す。
 
 `utils/schemas.ts:33-52` の `reviewSchema` から `authorName`/`authorImageUrl` を削除し、
