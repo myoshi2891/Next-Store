@@ -113,11 +113,16 @@
 または `# Stripe ダッシュボード > API キーから取得` のコメント付き）。
 **実際の値・実在の URL・実在の ID は絶対に書かない。**
 
-**Verify**: `test -f .env.example && ! grep -nE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=[^[:space:]].*$' .env.example` → exit 0
-（`test -f` でファイルの存在を先に必須化する — 存在しない場合は `grep` が
-「非0終了かつ0件ヒット」を返し `!` 否定で見かけ上パスしてしまうため、存在チェックを
-先に置いて検証をすり抜けさせない。コメントと空の代入は許可し、`KEY=x` を含む
-任意の非空値のみ検出する）
+**Verify**:
+1. `test -f .env.example && ! grep -nE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=[^[:space:]].*$' .env.example` → exit 0
+   （`test -f` でファイルの存在を先に必須化する — 存在しない場合は `grep` が
+   「非0終了かつ0件ヒット」を返し `!` 否定で見かけ上パスしてしまうため、存在チェックを
+   先に置いて検証をすり抜けさせない。コメントと空の代入は許可し、`KEY=x` を含む
+   任意の非空値のみ検出する）
+2. 「Current state」に列挙した 10 個のキーがすべて存在することをキー単位で確認する:
+   `for k in DATABASE_URL DIRECT_URL SUPABASE_URL SUPABASE_KEY ADMIN_USER_ID STRIPE_SECRET_KEY NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY CLERK_SECRET_KEY APP_URL; do grep -q "^${k}=" .env.example || echo "MISSING: $k"; done`
+   → 出力が空（全キーが空値またはコメント付きで存在すること。値が空欄なのは許可、
+   欠落しているキーのみ `MISSING` として検出する）
 
 ### Step 3: README の記載を実態に合わせる
 
