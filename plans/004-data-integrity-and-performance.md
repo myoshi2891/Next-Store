@@ -194,10 +194,19 @@ SQL
 
   **Serializable を利用できない環境向けのフォールバック**:
   Supabase PgBouncer のトランザクションプーリングモード等で Serializable が
-  使えない場合は、`updateCart` 内で
-  `db.cart.update({ where: { id: cart.id, version: currentVersion }, data: { version: { increment: 1 }, ...sums } })`
-  の楽観的ロック（Cart に `version Int @default(0)` バージョンカラムを追加）を行い、
-  `count === 0`（別トランザクションが先に更新済み）なら `P2034` と同様に再試行する。
+  使えない場合は、Cart に `version Int @default(0)` バージョンカラムを追加し、
+  `updateCart` を上記の再試行ループの**各イテレーション内**で以下のように実装する:
+  1. `tx` を使って Cart と CartItem を再読込し、現在の `version` と最新の
+     `cartItems`/`product` から `numItemsInCart`/`cartTotal`/`orderTotal` を
+     その場で再計算する（呼び出し元から渡された古い `cart` オブジェクトの値は
+     使わない）。
+  2. `count` を返す `tx.cart.updateMany({ where: { id: cart.id, version: currentVersion }, data: { version: { increment: 1 }, ...sums } })`
+     で更新する（`count` を持たない `update` は使わない）。
+  3. `result.count === 0`（別トランザクションが先に `version` を進めていた場合）は
+     `P2034` とは別の `OptimisticLockConflictError` を投げ、呼び出し箇所の再試行
+     ループでこれも `P2034` と同様にキャッチして次のイテレーションに進む。
+  4. `result.count === 1` なら成功として、再読込した `version + 1` と再計算済みの
+     集計値をそのイテレーションの戻り値とする。
 
   **Cart.version マイグレーション要件**: このフォールバックを選択する場合は
   `Cart` モデルへの `version Int @default(0)` カラム追加を
@@ -292,8 +301,39 @@ SQL
    同じデータソースから表示できる。現在価格（変更後の `product.price`）は
    CartItem の `product.price` として自然に反映される。
 
-**STOP 条件**: `updateProductAction` が存在しない、またはシグネチャが
-「Current state」の記述と一致しない場合は報告する（コードがドリフトした可能性）。
+**7c — 商品削除後のカート再計算**
+
+`prisma/schema.prisma:72` の `CartItem.product` は `onDelete: Cascade` のため、
+`deleteProductAction`（`utils/actions.ts:110-123`）が商品を削除すると該当
+`CartItem` 行は DB 側で自動削除されるが、親 `Cart` の `numItemsInCart` /
+`cartTotal` / `orderTotal`（キャッシュされた集計値）は再計算されず、削除された
+商品分だけ過大な値のまま残る。`deleteProductAction` を以下のように変更する:
+
+1. `db.product.delete` の**前**に、同一 `db.$transaction(async (tx) => { ... })`
+   内で対象 `productId` を含む `CartItem` を持つ全 Cart を特定する（7b と同じ
+   クエリパターン）:
+
+   ```ts
+   const affectedCarts = await tx.cart.findMany({
+     where: { cartItems: { some: { productId } } },
+     include: { cartItems: { include: { product: true } } },
+   });
+   ```
+
+2. 同じ `tx` で `tx.product.delete({ where: { id: productId } })` を実行する
+   （Cascade により該当 `CartItem` も削除される）。
+
+3. 削除後、7b で追加する `updateCart(cart, tx)` のトランザクションクライアント
+   対応を再利用し、特定した各 Cart に同じ `tx` を渡して呼び出し、
+   `numItemsInCart`/`cartTotal`/`orderTotal` を再計算する（削除済み商品を除いた
+   残りの `cartItems` から計算されるよう、`updateCart` 内で Cart を再読込する）。
+
+`deleteImage` の呼び出しと `revalidatePath` は従来どおりトランザクション外で行う
+（Supabase Storage 操作は DB トランザクションの対象外）。
+
+**STOP 条件**: `updateProductAction` または `deleteProductAction` が存在しない、
+またはシグネチャが「Current state」の記述と一致しない場合は報告する
+（コードがドリフトした可能性）。
 
 **Verify**: `bun run test` → 全パス、`bunx tsc --noEmit` → exit 0
 
