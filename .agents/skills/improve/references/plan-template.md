@@ -46,7 +46,7 @@ File naming: `<chosen-dir>/NNN-short-slug.md`, numbered in recommended execution
 - **Priority**: P1 | P2 | P3
 - **Effort**: S | M | L
 - **Risk**: LOW | MED | HIGH
-- **Depends on**: plans/NNN-*.md (or "none")
+- **Depends on**: <chosen-dir>/NNN-*.md (or "none")
 - **Category**: bug | security | perf | tests | tech-debt | migration | dx | docs | direction
 - **Planned at**: commit `<short SHA>`, <YYYY-MM-DD>
 - **Issue**: <GitHub issue URL — only when published via `--issues`; omit otherwise>
@@ -158,7 +158,7 @@ Machine-checkable. ALL must hold:
   - `git diff --cached --stat` (staged)
   - `git diff --stat` (unstaged)
   - `git ls-files --others --exclude-standard` (untracked)
-- [ ] `plans/README.md` status row updated — unless a reviewer/dispatcher told
+- [ ] `<chosen-dir>/README.md` status row updated — unless a reviewer/dispatcher told
   you they maintain the index (see the executor instructions above and the
   matching Scope note), in which case skip this and leave it to them
 
@@ -184,7 +184,7 @@ For the human/agent who owns this code after the change lands:
 
 ---
 
-## Index file: `plans/README.md`
+## Index file: `<chosen-dir>/README.md`
 
 Written once by the advisor after all plans, updated by executors:
 
