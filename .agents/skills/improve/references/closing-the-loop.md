@@ -12,6 +12,7 @@ The founding rule survives unchanged: **the advisor never edits source code.** I
 
 - The repo is a git repository (worktree isolation requires it). If not: stop and say so.
 - The plan file exists and its dependencies show DONE in `<chosen-dir>/README.md` (where `<chosen-dir>` is the directory recorded in Phase 4 — `plans/` or `advisor-plans/`; see Hard Rule 1 in SKILL.md). If not: stop, name the missing dependency.
+- If the requested target is Plan 006 (a spike bundle, not a dispatchable plan): STOP. Do not pass Plan 006 to the executor. Instead require that an individual 1xx plan has been created for each selected item and dispatch that plan instead.
 - Read the plan's `Planned at` base SHA and, yourself, run all four drift-check commands from the plan template against the in-scope paths: `git diff --stat <planned-at SHA>..HEAD`, `git diff --cached --stat`, `git diff --stat`, and `git ls-files --others --exclude-standard`. Do not rely on any single one of these — the first alone misses staged/unstaged/untracked changes, and an argument-less `git diff --stat` alone misses committed drift since the base commit and staged changes. If any command reports an in-scope change, reconcile the plan first (see below) — don't hand a stale plan to an executor.
 
 ### Dispatch
