@@ -1,11 +1,14 @@
 import { describe, it, expect, expectTypeOf } from "vitest";
 import SingleProductPage from "../../app/products/[id]/page";
+import ProductsPage from "../../app/products/page";
+import type { ReactElement } from "react";
 
-type PageProps = Parameters<typeof SingleProductPage>[0];
+type SingleProductPageProps = Parameters<typeof SingleProductPage>[0];
+type ProductsPageProps = Parameters<typeof ProductsPage>[0];
 
 describe("params/searchParams Promise 化の型安全性", () => {
 	it("SingleProductPage の params が Promise 型であること", () => {
-		expectTypeOf<PageProps>().toMatchTypeOf<{
+		expectTypeOf<SingleProductPageProps>().toMatchTypeOf<{
 			params: Promise<{ id: string }>;
 		}>();
 	});
@@ -16,24 +19,28 @@ describe("params/searchParams Promise 化の型安全性", () => {
 		expect(id).toBe("test-id");
 	});
 
-	it("searchParams を await で取得できる", async () => {
-		const searchParams = Promise.resolve({
-			layout: "grid",
-			search: "test",
-		});
-		const { layout, search } = await searchParams;
-		expect(layout).toBe("grid");
-		expect(search).toBe("test");
+	it("ProductsPage の searchParams が Promise 型であること", () => {
+		expectTypeOf<ProductsPageProps>().toMatchTypeOf<{
+			searchParams: Promise<{
+				layout?: string | string[];
+				search?: string | string[];
+			}>;
+		}>();
 	});
 
-	it("searchParams のデフォルト値が正しく適用される", async () => {
-		const searchParams = Promise.resolve(
-			{} as { layout?: string; search?: string }
-		);
-		const { layout, search } = await searchParams;
-		const resolvedLayout = layout || "grid";
-		const resolvedSearch = search || "";
-		expect(resolvedLayout).toBe("grid");
-		expect(resolvedSearch).toBe("");
+	it("ProductsPage が searchParams を await して layout/search に反映する", async () => {
+		const element = (await ProductsPage({
+			searchParams: Promise.resolve({ layout: "list", search: "test" }),
+		})) as ReactElement<{ layout: string; search: string }>;
+		expect(element.props.layout).toBe("list");
+		expect(element.props.search).toBe("test");
+	});
+
+	it("ProductsPage が searchParams 未指定時に grid / 空文字のデフォルト値を適用する", async () => {
+		const element = (await ProductsPage({
+			searchParams: Promise.resolve({}),
+		})) as ReactElement<{ layout: string; search: string }>;
+		expect(element.props.layout).toBe("grid");
+		expect(element.props.search).toBe("");
 	});
 });
