@@ -5,7 +5,7 @@
 > いずれかが発生したら、即座に停止して報告する。完了したら `plans/README.md` の
 > ステータス行を更新する。
 >
-> **Drift check (最初に実行)**: `git diff --stat 90f91f4..HEAD -- utils/actions.ts app/api/payment/route.ts app/api/confirm/route.ts CLAUDE.md`
+> **Drift check (最初に実行)**: `git diff --stat 90f91f4..HEAD -- utils/actions.ts app/api/payment/route.ts app/api/confirm/route.ts CLAUDE.md prisma/schema.prisma prisma/migrations __tests__/utils/cart-calculations.test.ts __tests__/api/payment-route.test.ts __tests__/api/confirm-route.test.ts __tests__/utils/order-actions.test.ts`
 > Plan 001 による `app/api/payment/route.ts` の認可チェック追加は想定内のドリフト。
 > それ以外の in-scope 変更は「Current state」と比較し、不一致は STOP。
 
@@ -182,13 +182,29 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
   `shipping` だけを使う。再計算と Order 作成の間に別リクエストの変更を取り込まないこと。
   Step 2 で追加した Cart-to-Order 関係を使い、作成する Order に現在の Cart を接続して
   `cartId` を永続化する。
+- **未払い Order 削除の除外条件（Step 4 で Option B を選択した場合）**: 削除対象の
+  `where` に `isPending: false` を追加し、`isPending: true` かつ `stripeSessionId` が
+  非 null の Order（Stripe Checkout が進行中）は削除しない。このような Order が
+  存在する場合は、`stripe.checkout.sessions.retrieve(stripeSessionId)` で状態を確認し、
+  `status === 'open'` なら既存 Order と Cart 接続をそのまま再利用して redirect する
+  （新規 Order を作らない）。`status` が `'expired'`/`'complete'` 以外の中断状態であれば
+  Stripe 側のセッションを安全に終了させてから通常の削除・再作成フローに進む。
+  こうすることで、confirm ルートが後から参照する Order を削除して外部キー・404 エラーを
+  起こす事態を防ぐ。Step 4 で Option A（冪等キーのみ）を選択した場合はこの分岐は不要。
+- `updateCart` の再計算と Order 作成を含むトランザクションが、confirm ルートの
+  `isPaid` 更新や別リクエストの `createOrderAction` と競合しないことを検証する
+  並行実行テストを `__tests__/utils/order-actions.test.ts` に追加する。
 - Prisma が対応する場合はこのトランザクションを `Serializable` で実行し、競合による
   シリアライズ失敗は安全に再試行するか、注文を作成せず明示的なエラーを返す。これが
   利用できない場合は、更新条件にカートの `updatedAt` を含める等の同等のバージョン検証を
   行い、不一致時は Order を作成しない。
 - `:587` を `user.emailAddresses[0]?.emailAddress` にし、undefined の場合は
-  `throw new Error("No email address found for user")`（renderError 経由で
-  ユーザーにメッセージが返る）。
+  `throw new Error("No email address found for user")` する。Plan 001 Step 6 で
+  `renderError` が `ValidationError` 以外のメッセージを握りつぶす契約に変更される
+  場合（`error instanceof ValidationError ? error.message : "there was an error"`）、
+  この throw も `ValidationError`（Plan 001 で定義するカスタムクラス）を使うこと。
+  そうしないとユーザーには汎用メッセージしか返らない。Plan 001 未実施の場合は
+  通常の `Error` のままでよい。
 - Order 作成時に、再計算した `currentCart.cartItems` の各行から `OrderItem`
   （Step 2 で追加済みのスキーマを使用）を同一トランザクションで作成する。各 `OrderItem`
   には `productId`、`productName`（作成時点の `product.name`）、`quantity`（cartItem の
@@ -212,11 +228,35 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
   ネットワーク再試行やページリロードで同一 Order に対して payment ルートが複数回
   呼ばれると、Stripe に複数の Checkout Session が作成される可能性がある。
   この問題を本 Step で解消するために、以下の **2 つのアプローチのいずれかを選択**する:
-  - **Option A — Stripe 冪等キー（推奨）**: `stripe.checkout.sessions.create` の
-    第 2 引数に `{ idempotencyKey: \`checkout-${orderId}\` }` を渡す。同一キーで
-    再リクエストされた場合 Stripe は最初のセッションをそのまま返すため、
-    追加の DB ロックなしに重複作成が防止できる。冪等キーは 24 時間有効であり
-    Stripe の推奨方式。
+  - **Option A — Stripe 冪等キー（推奨）**: `Order` に `stripeSessionId String?` と
+    `checkoutAttempt Int @default(0)` を追加し（要マイグレーション）、
+    `stripe.checkout.sessions.create` の第 2 引数に
+    `{ idempotencyKey: \`checkout-${orderId}-${checkoutAttempt}\` }` を渡す。
+    冪等キーは Stripe 側で**最低 24 時間**保持され、同一キーでの再リクエストには
+    最初のセッションがそのまま返る。ただし Checkout Session 自体は 24 時間以内に
+    `expired` になり得るため、同じキーを使い続けると期限切れセッションが返り続ける
+    リスクがある。そこで再リクエスト時は次の手順を踏む:
+    1. `stripeSessionId` が保存済みなら、まず
+       `stripe.checkout.sessions.retrieve(stripeSessionId)` で現在の状態を取得する
+       （新規 `create` 呼び出しより先に行う）。
+    2. `status === 'open'` ならそのセッションをそのまま再利用し `clientSecret` を返す。
+       新しい `create` は呼ばない。
+    3. `status === 'expired'` と確認できた場合のみ、`stripeSessionId` を `null` に戻し
+       `checkoutAttempt` をインクリメントしてから新しい `idempotencyKey`
+       （`checkout-${orderId}-${checkoutAttempt + 1}`）で新規セッションを作成する。
+       `expired` を確認する前に冪等キーを変えて新規作成しない。
+    作成に成功したら `session.id` を `stripeSessionId` に保存する。
+    **作成失敗時**: `stripe.checkout.sessions.create` が例外をスローしても、
+    同じ `idempotencyKey`（`checkout-${orderId}-${checkoutAttempt}`）を保持したまま
+    エラーを呼び出し元に返す（`isPending` のような DB フラグは Option A では
+    使わないため解放処理は不要）。次回リクエストは同じ `idempotencyKey` で
+    再試行され、実際にはセッションが作成済みだった場合は Stripe が同一セッションを
+    返し、未作成だった場合はそのまま新規作成される。冪等キー自体が二重作成を
+    防ぐため、追加の DB ロックは不要。
+    **並行テスト（Option A）**: 同一 `orderId` に対して 2 つのリクエストを同時に
+    送るシナリオのユニットテストを `__tests__/api/payment-route.test.ts` に追加し、
+    Stripe に渡される `idempotencyKey` が両リクエストで同一であること、および
+    両リクエストが同じ `session.id` を受け取ることを検証する。
   - **Option B — Order の処理中フラグ**: `Order` モデルに `isPending Boolean @default(false)`
     フィールドと `stripeSessionId String?` フィールドを追加し（要マイグレーション）、
     セッション作成前に以下の**アトミック**な更新で「処理中」予約を確保する:
@@ -260,41 +300,13 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
     この条件付き更新（`isPaid: false` を条件に含める）により、confirm ルートが
     `isPaid: true` に更新した後に誤って `isPending` を解放することを防ぐ。
 
-    **Stripe セッション作成失敗時の解放**: `stripe.checkout.sessions.create` が
-    例外をスローした場合、単純な `finally` による無条件解放は confirm ルートとの
+    **Stripe セッション作成失敗時の解放（Option B）**: `stripe.checkout.sessions.create`
+    が例外をスローした場合、単純な `finally` による無条件解放は confirm ルートとの
     競合を生じさせるため使用しない。ネットワーク障害など不確定な失敗では
-    Stripe 側でセッションが作成済みの可能性があるため、以下のいずれかを選択する:
-
-    - **Option A（推奨）— Stripe 冪等キーを利用**: Step 4 の Option A（Stripe
-      冪等キー方式）を選択した場合、catch 内で `stripe.checkout.sessions.list` や
-      `stripe.checkout.sessions.retrieve` を呼び、同じ冪等キーで作成済みの
-      セッションが存在するか照会する。存在すれば `stripeSessionId` を保存して
-      成功レスポンスを返す（再試行で同一セッションを再利用）。存在しなければ
-      `isPending` を解放する:
-
-      ```ts
-      catch (err) {
-        // 冪等キーで既存セッションを照会して状態を再同期
-        const existing = await stripe.checkout.sessions.list(
-          { payment_intent: undefined }, // 冪等キー照会の代替手段を使うこと
-        ).catch(() => null);
-        if (existing /* 既存セッション確認済み */) {
-          await db.order.updateMany({
-            where: { id: orderId, isPending: true, isPaid: false },
-            data: { isPending: false, stripeSessionId: existing.id },
-          });
-        } else {
-          await db.order.updateMany({
-            where: { id: orderId, isPending: true, isPaid: false },
-            data: { isPending: false, stripeSessionId: null },
-          });
-        }
-        throw err;
-      }
-      ```
-
-    - **Option B — 条件付き解放のみ**: 照会を行わず、catch 内で条件付き更新のみを行う。
-      不確定な失敗時にセッションが作成済みであっても解放するリスクを許容する場合:
+    Stripe 側でセッションが作成済みの可能性があるが、Option B は冪等キーを
+    使わないため作成済みセッションの照会手段を持たない。したがって catch 内では
+    条件付き解放のみを行い、不確定な失敗時にセッションが作成済みであっても
+    `isPending` を解放するリスクを許容する:
 
       ```ts
       catch (err) {
@@ -306,10 +318,11 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
       }
       ```
 
-    どちらの Option でも `isPaid: false` を条件に含めることで、confirm ルートが
-    `isPaid: true` に更新した後に誤って `isPending` を解放することを防ぐ。
+    `isPaid: false` を条件に含めることで、confirm ルートが `isPaid: true` に
+    更新した後に誤って `isPending` を解放することを防ぐ。
     **成功時の `stripeSessionId` 保存（`data: { stripeSessionId: session.id }`）と
-    既存の条件付き解放は維持すること**。
+    上記の条件付き解放は維持すること**。この不確定リスクを避けたい場合は
+    Option A（冪等キー）を選ぶこと。
 
     **決済キャンセル・期限切れ時の回収**: Stripe Checkout Session が
     ユーザーによってキャンセルされるか `expires_at` を超過した場合、
@@ -318,16 +331,19 @@ Checkout Session 作成処理の冒頭に STOP 条件として明記すること
     Plan 006 が未実装の場合は、payment ルートの既存セッション確認時に
     `status === 'expired'` を検出した段階でインラインで回収する（上記の回収手順）。
 
-    confirm ルート（Step 5）で `isPaid: true` にする際に `isPending: false` に戻す
+    **Step 5 のクリーンアップ（Option B のみ）**: confirm ルート（Step 5）で
+    `isPaid: true` にする際に `isPending: false` に戻す
     (`data: { isPaid: true, isPending: false }`)。この更新は `isPending: true` を
     条件に含めなくてよい（confirm は最終状態遷移であり、ここでの `isPending` 解放は
-    副次的なクリーンアップ）。
+    副次的なクリーンアップ）。Option A を選択した場合は `isPending` フィールド自体が
+    存在しないため、この Step 5 の変更は不要。
 
-    **並行テスト**: 同一 `orderId` に対して 2 つのリクエストを同時に送るシナリオの
-    ユニットテストを `__tests__/api/payment-route.test.ts` に追加し、1 つが 200、
-    もう 1 つが 409 を返すこと、および Stripe が 1 度だけ呼ばれることを検証する。
-    また、Stripe 作成失敗後に `isPending` が `false` に戻ること（条件付き更新が
-    実行されること）、および期限切れセッション検出後の回収が動作することも検証する。
+    **並行テスト（Option B）**: 同一 `orderId` に対して 2 つのリクエストを同時に
+    送るシナリオのユニットテストを `__tests__/api/payment-route.test.ts` に追加し、
+    1 つが 200、もう 1 つが 409 を返すこと、および Stripe が 1 度だけ呼ばれることを
+    検証する。また、Stripe 作成失敗後に `isPending` が `false` に戻ること
+    （条件付き更新が実行されること）、および期限切れセッション検出後の回収が
+    動作することも検証する。
     **注意**: このアプローチはスキーマ変更を伴うため Plan 004 のマイグレーションと
     競合しないよう実行順を調整すること。
   - **STOP 条件**: 両アプローチとも実装困難な事情（環境制約・既存テストとの干渉）が
@@ -373,8 +389,8 @@ Order と Cart の関係が一致しない 400、無効/未許可の origin で 
 
 `app/api/confirm/route.ts`:
 - `session_id` が null なら 400 を返す（`as string` キャスト除去）。
-- 支払い確認を `session.status === "complete" && session.payment_status === "paid"`
-  に強化する。
+- 支払い確認を `const paymentConfirmed = session.status === "complete" &&
+  session.payment_status === "paid";` として算出する。
 - Stripe セッション取得後、**database 更新より前**に `session.metadata.orderId` と
   `session.metadata.cartId` がともに空でない文字列であることを runtime で検証する。
   欠落・空文字列・文字列以外なら 400 を返し、order 更新も cart 削除も行わない。
@@ -390,7 +406,11 @@ Order と Cart の関係が一致しない 400、無効/未許可の origin で 
   cart が null でも 403 にせずそのまま `/orders` へ redirect）。
   **注意**: 支払い済み（`isPaid === true`）の Order に対しては、以下の `cartId`
   一致検証（未完了 Order 分岐）を適用しない。
-- Order がまだ `isPaid !== true`（未完了）の場合のみ: Cart を取得した後かつ
+- Order がまだ `isPaid !== true`（未完了）の場合、まず `paymentConfirmed` を検査する:
+  偽（未完了・未払いの Session）なら `db.$transaction` を実行せず、Order 更新も
+  Cart 削除も一切行わずに終了し、400（または適切なエラーレスポンス）を返す。
+  以下の `cartId` 一致検証とトランザクション処理は `paymentConfirmed` が真の
+  場合にのみ実施する: Cart を取得した後かつ
   `db.$transaction` 実行前に、`order.cartId`（DB に永続化済み）と
   `session.metadata.cartId`（Stripe メタデータ由来）が一致することを検証する。
   不一致の場合は 400 を返し、Order 更新も Cart 削除も行わない。
