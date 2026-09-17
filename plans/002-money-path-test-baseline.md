@@ -5,7 +5,7 @@
 > いずれかが発生したら、即座に停止して報告する。完了したら `plans/README.md` の
 > ステータス行を更新する。
 >
-> **Drift check (最初に実行)**: `git diff --stat 90f91f4..HEAD -- utils/actions.ts app/api/payment/route.ts app/api/confirm/route.ts __tests__/`
+> **Drift check (最初に実行)**: `git diff --stat 90f91f4..HEAD -- utils/actions.ts utils/schemas.ts app/api/payment/route.ts app/api/confirm/route.ts __tests__/`
 > in-scope 対象のソースが変わっていたら「Current state」の抜粋と比較し、
 > 不一致は STOP condition として扱う。
 
@@ -161,7 +161,10 @@ Clerk は `vi.mock("@clerk/nextjs/server")` で `auth`/`currentUser` をモッ�
 
 `__tests__/utils/schemas.test.ts` を作成:
 
-- `imageSchema`（`validateImageFile` への委譲を網羅）。以下の「サイズ」「許可 MIME」
+- `imageSchema`（`validateImageFile` への委譲を網羅）。Plan 001 で `imageSchema` は
+  非同期 `refine` を含むため、これらのケースは同期の `validateWithZodSchema` では
+  評価できない。`validateWithZodSchemaAsync`（または `imageSchema.safeParseAsync`
+  を直接呼ぶ経路）を `await` して非同期テストとして実行すること。以下の「サイズ」「許可 MIME」
   ケースは Plan 001 が導入するマジックバイト検証・実デコード検証（`sharp`/
   `image-size`）を通過する必要があるため、MIME 宣言だけでなく実際にデコード可能な
   最小フィクスチャを使う（例: 1x1 の最小 PNG/GIF、最小の有効 JPEG/WebP を各形式
@@ -185,7 +188,9 @@ Clerk は `vi.mock("@clerk/nextjs/server")` で `auth`/`currentUser` をモッ�
   - **無効画像バイト（非画像 MIME 宣言時）**: `type: "application/octet-stream"` で
     ランダムバイト列を渡した場合は MIME チェックで拒否される。
 - `productSchema`: price に負数・小数で失敗、description 10 語未満で失敗
-- `validateWithZodSchema`: 失敗時にメッセージが結合された Error を throw
+- `validateWithZodSchema`（`productSchema`/`reviewSchema` など同期スキーマのみが対象。
+  非同期 `refine` を含む `imageSchema` のテストにはこの同期経路を使わない —
+  上記の画像ケースを参照）: 失敗時にメッセージが結合された Error を throw
 
 **Verify**: `bun run test` → 全パス（38 + 新規テスト）
 

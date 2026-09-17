@@ -162,10 +162,14 @@ const data = await res.json();
 
 ### Step 5: eslint 9 + flat config への移行
 
-1. `bunx eslint --version` で現在のバージョンを確認する。メジャーが 9 未満、
-   または eslint 自体が存在しない場合のみ `bun remove eslint && bun add -d eslint@^9`
-   を実行する。既に 9 系ならこのステップはスキップする（再インストールは
-   `bun.lock` の不要な差分を生むため行わない）。
+1. `bunx eslint --version` は eslint がローカルに存在しない場合 bunx が自動で
+   ダウンロードして実行してしまい、「存在しない」を検出できない。代わりに
+   `package.json` の `devDependencies`/`dependencies` に `eslint` があるか、
+   `node_modules/eslint/package.json` の `version` を直接確認する。既に 9 系が
+   ローカルに存在する場合のみこのステップをスキップする（再インストールは
+   `bun.lock` の不要な差分を生むため行わない）。メジャーが 9 未満、または
+   eslint 自体が存在しない場合は `bun remove eslint && bun add -d eslint@^9`
+   を実行する。
 2. eslint 9 移行では、既存の設定ファイルの状態を先に確認してから対応を選ぶ:
    - `.eslintrc.json` が存在し `eslint.config.mjs` が**存在しない**場合:
      `.eslintrc.json` を削除し、`eslint.config.mjs` を新規作成する。

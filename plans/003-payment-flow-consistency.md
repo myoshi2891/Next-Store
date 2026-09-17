@@ -215,9 +215,13 @@ Option B: 処理中フラグ）が使うフィールドを参照する。その�
   `cartId` を永続化する。
 - **未払い Order 削除の除外条件（Step 4 の Option A・B いずれを選択した場合も適用）**:
   削除対象の `where` に、Option B（`isPending` フィールドあり）なら `isPending: false` を、
-  Option A（`isPending` フィールドを持たない）なら `stripeSessionId: null` を追加し、
+  Option A（`isPending` フィールドを持たない）なら `checkoutAttempt: 0` を追加し
+  （`stripeSessionId: null` 単独では不十分 — 下記の通り Option A は Stripe 呼び出し
+  「前」に `checkoutAttempt` をインクリメントして予約するため、Stripe 応答待ちの間は
+  `stripeSessionId` がまだ null のままになる。`checkoutAttempt: 0` を除外条件に使うことで
+  この予約中ウィンドウの Order も削除対象から外れる）、
   Stripe Checkout が進行中の Order（Option B は `isPending: true` かつ `stripeSessionId`
-  非 null、Option A は `stripeSessionId` 非 null）を削除しない。このような Order が
+  非 null、Option A は `checkoutAttempt` が 0 より大きい）を削除しない。このような Order が
   存在する場合は、`stripe.checkout.sessions.retrieve(stripeSessionId)` で状態を確認し、
   `status === 'open'` なら既存 Order と Cart 接続をそのまま再利用して redirect する
   （新規 Order を作らない）。`status` が `'expired'`/`'complete'` 以外の中断状態であれば
@@ -272,6 +276,24 @@ Option B: 処理中フラグ）が使うフィールドを参照する。その�
     0. Stripe を呼び出す前に `order.isPaid` を判定する。`true` なら Stripe 呼び出し・
        `create` はいずれも行わず、支払い済みである旨のエラー（再 Checkout 不可）を
        返して終了する。
+    0.5. **予約（Stripe 呼び出し前）**: `stripeSessionId` が未保存（初回リクエスト）
+       の場合、Stripe を呼び出す**前**に `checkoutAttempt` をインクリメントする
+       アトミックな条件付き更新で Order を予約する:
+
+       ```ts
+       const reserved = await db.order.updateMany({
+         where: { id: orderId, isPaid: false, checkoutAttempt: readCheckoutAttempt, stripeSessionId: null },
+         data: { checkoutAttempt: { increment: 1 } },
+       });
+       ```
+
+       `reserved.count === 0` の場合は別リクエストが先に予約済みのため、Order を
+       再読込して手順 1 からやり直す。`reserved.count === 1` の場合のみ
+       `readCheckoutAttempt + 1` を `usedCheckoutAttempt` として Stripe を呼び出す。
+       この予約により、`createOrderAction`（Step 3）の未払い Order 削除は
+       `checkoutAttempt: 0` を除外条件とするため、Stripe 応答待ちの間
+       （`stripeSessionId` がまだ書き込まれていない区間）もこの Order を
+       削除対象から除外できる。
     1. `stripeSessionId` が保存済みなら、まず
        `stripe.checkout.sessions.retrieve(stripeSessionId)` で現在の状態を取得する
        （新規 `create` 呼び出しより先に行う）。
@@ -298,7 +320,7 @@ Option B: 処理中フラグ）が使うフィールドを参照する。その�
        （読み取った値が古いまま新規セッションを作成し、他リクエストが直前に保存した
        有効な `stripeSessionId` を上書きする事態を防ぐ）。`expired` を確認する前に
        冪等キーを変えて新規作成しない。
-    作成に成功したら、その作成に使った試行世代（新規作成時は手順 0 到達時点の
+    作成に成功したら、その作成に使った試行世代（新規作成時は手順 0.5 で予約した
     `checkoutAttempt`、手順 4 のリセットを経た場合は `readCheckoutAttempt + 1`）と
     `stripeSessionId: null` を条件にした compare-and-set で保存する:
 
@@ -344,6 +366,13 @@ Option B: 処理中フラグ）が使うフィールドを参照する。その�
     送るシナリオのユニットテストを `__tests__/api/payment-route.test.ts` に追加し、
     Stripe に渡される `idempotencyKey` が両リクエストで同一であること、および
     両リクエストが同じ `session.id` を受け取ることを検証する。
+
+    **並行テスト（`createOrderAction` と Stripe 呼び出しの競合）**:
+    `__tests__/utils/order-actions.test.ts` に、手順 0.5 の予約（`checkoutAttempt`
+    インクリメント）が完了しモックした `stripe.checkout.sessions.create` の
+    解決が保留されている間に `createOrderAction` を実行するテストを追加し、
+    未払い Order 削除の `deleteMany` の `where` に予約済み Order が一致しない
+    （＝削除されない）ことを検証する。
   - **Option B — Order の処理中フラグ**: `Order` モデルの `isPending Boolean @default(false)`
     フィールドと `stripeSessionId String?` フィールド（Step 2 で追加済み）を使う。
     予約の `updateMany` より**先に**、読み込み済みの Order が既に `stripeSessionId` を
@@ -520,7 +549,12 @@ Order と Cart の関係が一致しない 400、無効/未許可の origin で 
   偽（未完了・未払いの Session）なら `db.$transaction` を実行せず、Order 更新も
   Cart 削除も一切行わずに終了し、400（または適切なエラーレスポンス）を返す。
   以下の `cartId` 一致検証とトランザクション処理は `paymentConfirmed` が真の
-  場合にのみ実施する: Cart を取得した後かつ
+  場合にのみ実施する: `paymentConfirmed` が真と判定された直後、`db.$transaction`
+  を開始する前に、`session.amount_total` と `order.orderTotal * 100` を照合する。
+  一致しない場合は 400 を返し、Order・Cart のいずれも変更せずに終了する
+  （Order 作成後に商品価格が変わった、またはセッションが別注文のものである
+  ケースの早期検知 — Step 4 で追加するセッション作成時のアサーションと対になる）。
+  金額が一致した場合のみ、Cart を取得した後かつ
   `db.$transaction` 実行前に、`order.cartId`（DB に永続化済み）と
   `session.metadata.cartId`（Stripe メタデータ由来）が一致することを検証する。
   不一致の場合は 400 を返し、Order 更新も Cart 削除も行わない。

@@ -220,6 +220,9 @@ Step 7 で追加する決済フロー関連テストに、`isPaid: true` の Ord
 または `imageSchema.safeParseAsync` を直接呼ぶ）を用意し、`utils/actions.ts:79`,
 `169` の 2 箇所の画像検証呼び出しのみを `await` 付きの非同期呼び出しに変更する。
 
+この非同期経路は次の Step 6 で `ValidationError` 契約に接続する（本 Step ではまだ
+接続しない — `ValidationError` クラスが存在しないため）。
+
 **Verify**: `bunx tsc --noEmit` → exit 0
 
 ### Step 6: renderError の情報漏洩を抑制する
@@ -230,6 +233,13 @@ Step 7 で追加する決済フロー関連テストに、`isPaid: true` の Ord
 投げる Error をカスタムクラス（例: `ValidationError extends Error`）にし、
 `renderError` は `error instanceof ValidationError ? error.message : "there was an error"`
 を返す。`console.log(error)` は `console.error(error)` に変更（サーバーログには残す）。
+
+Step 5 で新設した非同期画像検証経路（`validateWithZodSchemaAsync` または
+`imageSchema.safeParseAsync` を呼ぶ側）も同じ契約に接続する: `safeParseAsync`
+失敗時に `validateWithZodSchema` と同じ `ValidationError`（メッセージを結合した
+もの）を throw し、`renderError` が汎用メッセージにフォールバックしないように
+する。`utils/actions.ts:79`, `169` の 2 箇所それぞれについて、不正な画像入力で
+`{ message }` に具体的な検証メッセージが返ることを検証するテストを追加する。
 
 **Verify**: `bun run test` → 全パス（既存 38 テスト + このプランで追加したテスト）
 

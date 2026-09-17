@@ -70,7 +70,9 @@
 ## Scope
 
 **In scope**:
-- `prisma/schema.prisma`（制約・インデックス追加のみ。カラム型変更禁止）
+- `prisma/schema.prisma`（制約・インデックス追加、および Serializable 分離レベルが
+  使えない場合のフォールバックとして `Cart.version Int @default(0)` カラムの追加
+  （下記ステップ参照）。既存カラムの型変更は禁止）
 - `utils/actions.ts`（`updateOrCreateCartItem`, `addToCartAction`, `toggleFavoriteAction`, `fetchFavoriteId` 周辺）
 - `components/products/FavoriteToggleButton.tsx`, `ProductsGrid.tsx`, `ProductsList.tsx`, `ProductsContainer.tsx`
 - `app/cart/page.tsx`
@@ -359,6 +361,9 @@ SQL
 
 - [ ] `bunx prisma validate` が valid
 - [ ] `prisma/migrations/` に新規マイグレーションがコミットされている
+- [ ] Step 4 で Serializable フォールバックを選択した場合のみ: `Cart.version` が
+      `prisma/schema.prisma` と対応するマイグレーションに含まれ、`updateCart` の
+      `version` 検証（compare-and-set）テストが追加されている
 - [ ] `grep -n "upsert" utils/actions.ts` がヒットする
 - [ ] `grep -rn "fetchFavoriteId(" components/products/FavoriteToggleButton.tsx` → 0 件
 - [ ] `bun run test` / `bunx tsc --noEmit` / `bun run lint` がすべて exit 0
