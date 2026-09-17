@@ -160,9 +160,23 @@ order/cart 取得後（line 30 の null チェック内 or 直後）に所有権
 if (order.clerkId !== userId || cart.clerkId !== userId) {
     return Response.json(null, { status: 403, statusText: "Forbidden" });
 }
+if (order.isPaid) {
+    return Response.json(null, { status: 403, statusText: "Forbidden" });
+}
 ```
 
+`order.isPaid` チェックは Stripe セッション作成前（`stripe.checkout.sessions.create` 呼び出しより前）に
+行い、支払い済み注文への再チャージセッション発行を防ぐ。これは粗い一次防御であり、
+`orderId`/`cartId` の対応関係の厳密な検証（永続化された関連付けの照合）や
+チェックアウトの冪等性制御は、`Order` に `cartId` を永続化するスキーマ変更を前提とする
+ため plans/003-payment-flow-consistency.md の責務とし、本プランでは扱わない
+（plans/003 の「Why this matters」項目 5、Step 2〜4 を参照）。
+
 **Verify**: `bunx tsc --noEmit` → exit 0
+
+Step 7 で追加する決済フロー関連テストに、`isPaid: true` の Order で payment ルートを
+呼ぶと 403 が返り、`stripe.checkout.sessions.create` が呼ばれないことを検証する
+ケースを追加する。
 
 ### Step 5: 画像アップロードのストレージキーをサーバー生成にする
 
@@ -180,6 +194,18 @@ if (order.clerkId !== userId || cart.clerkId !== userId) {
 などで寸法取得を試み、失敗したら拒否）。この検証は `uploadImage` を呼ぶすべての
 呼び出し元（`utils/actions.ts:84`, `utils/actions.ts:172`）が通る共有スキーマ
 （`validateImageFile`）内に実装し、個別の呼び出し元での重複実装を避ける。
+
+`file.arrayBuffer()` の読み取りや `sharp`/`image-size` によるデコードは非同期処理の
+ため、この内容チェックは `z.refine` の非同期版（`refine` に async 関数を渡す）で
+実装する。`imageSchema`（`utils/schemas.ts:29-30`）が非同期 `refine` を含むことに
+なるため、`validateWithZodSchema`（`utils/schemas.ts:70-80`）を汎用のまま同期
+（`schema.safeParse`）で使い続けると非同期 refine が正しく評価されない
+（zod は同期パースの途中で非同期 refine に遭遇するとエラーを投げる）。
+`productSchema`/`reviewSchema` など他スキーマの呼び出し元（`utils/actions.ts:78`,
+`142`, `257`）を不要に非同期化しないよう、`imageSchema` 専用の非同期検証経路
+（例: `validateWithZodSchemaAsync` を新設し内部で `schema.safeParseAsync` を使う、
+または `imageSchema.safeParseAsync` を直接呼ぶ）を用意し、`utils/actions.ts:79`,
+`169` の 2 箇所の画像検証呼び出しのみを `await` 付きの非同期呼び出しに変更する。
 
 **Verify**: `bunx tsc --noEmit` → exit 0
 
@@ -205,15 +231,16 @@ if (order.clerkId !== userId || cart.clerkId !== userId) {
 - toggleFavoriteAction: delete の `where` に `clerkId` が含まれる（モックの呼び出し引数を検証）
 - createReviewAction: `P2002` を返す create モックで重複投稿メッセージを返し、並行リクエストでも重複成功にならない
 - renderError 相当: 非 ValidationError で内部メッセージが返らない
+- payment ルート: `isPaid: true` の Order で呼ぶと 403 が返り、`stripe.checkout.sessions.create` が呼ばれない（Step 4 参照）
 
-**Verify**: `bun run test` → 全パス、新規テストが 4 件以上含まれる
+**Verify**: `bun run test` → 全パス、新規テストが 5 件以上含まれる
 
 ## Test plan
 
 - 新規: `__tests__/security/authorization.test.ts`（Step 7 のケース一覧）
 - 構成パターン: AAA（Arrange-Act-Assert）。モック方針は `vitest.setup.ts` と
   既存テストに従う。
-- 検証: `bun run test` → 全パス（42 テスト以上）
+- 検証: `bun run test` → 全パス（43 テスト以上）
 
 ## Done criteria
 
@@ -222,8 +249,8 @@ if (order.clerkId !== userId || cart.clerkId !== userId) {
 - [ ] `bunx tsc --noEmit` が exit 0
 - [ ] `bunx prisma validate` が exit 0。`Review` に `@@unique([clerkId, productId])` を含むマイグレーションがある
 - [ ] `bun run lint` が exit 0
-- [ ] `bun run test` が exit 0、新規セキュリティテスト 4 件以上を含む
-- [ ] `grep -n "getAuthUser" utils/actions.ts` の結果に `createProductAction` 内の呼び出しが含まれない（`getAdminUser` に置換済み）
+- [ ] `bun run test` が exit 0、新規セキュリティテスト 5 件以上を含む
+- [ ] `createProductAction` 内で `getAdminUser()` が呼ばれ、その呼び出しが `db.product.create` より前に実行される（`grep -n "getAuthUser\|getAdminUser\|db.product.create" utils/actions.ts` で該当行の順序を確認し、`getAuthUser` が `createProductAction` 内に含まれないことも合わせて確認する）
 - [ ] `grep -n "authorName" components/reviews/SubmitReview.tsx` が 0 件
 - [ ] `git status` で in-scope 外のファイルに変更がない
 - [ ] `plans/README.md` のステータス行を更新済み

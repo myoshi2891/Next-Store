@@ -20,6 +20,12 @@ STOP conditions を厳守し、完了時に自分の行のステータスを更�
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED（理由 1 行）| REJECTED（理由 1 行）| STALE（より新しいプランまたは並行変更に追い越された — 理由 1 行）| NOT SELECTED（意図的に対象外 — Plan 006 の未選択スパイク項目に使用）
 
+Plan 006 のこの表での上位 Status は、下表「Plan 006 item selection & status」の
+状態から導出する: 項目が未選択（全項目 `NOT SELECTED`）または未着手なら `TODO`、
+いずれかの選択項目が `IN PROGRESS`（または他の未完了状態）なら `IN PROGRESS`、
+選択された全項目が `DONE` になった時点で `DONE` に更新する。reconcile 実行時は
+下表の状態からこの上位 Status を再計算し、不整合があれば修正する。
+
 ## Plan 006 item selection & status
 
 Select an item by changing `Selected` to `Yes` and its status to `IN PROGRESS`

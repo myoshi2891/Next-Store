@@ -5,9 +5,23 @@
 > いずれかが発生したら、即座に停止して報告する。完了したら `plans/README.md` の
 > ステータス行を更新する。
 >
-> **Drift check (最初に実行)**: `git diff --stat 90f91f4..HEAD -- utils/actions.ts app/api/payment/route.ts app/api/confirm/route.ts CLAUDE.md prisma/schema.prisma prisma/migrations __tests__/utils/cart-calculations.test.ts __tests__/api/payment-route.test.ts __tests__/api/confirm-route.test.ts __tests__/utils/order-actions.test.ts`
+> **Drift check (最初に実行)**: 以下の 4 コマンドをすべて Scope 記載パス
+> （`utils/actions.ts app/api/payment/route.ts app/api/confirm/route.ts CLAUDE.md prisma/schema.prisma prisma/migrations __tests__/utils/cart-calculations.test.ts __tests__/api/payment-route.test.ts __tests__/api/confirm-route.test.ts __tests__/utils/order-actions.test.ts`）
+> に対して実行する:
+>
+> ```sh
+> git diff --stat 90f91f4..HEAD -- utils/actions.ts app/api/payment/route.ts app/api/confirm/route.ts CLAUDE.md prisma/schema.prisma prisma/migrations __tests__/utils/cart-calculations.test.ts __tests__/api/payment-route.test.ts __tests__/api/confirm-route.test.ts __tests__/utils/order-actions.test.ts
+> git diff --cached --stat -- utils/actions.ts app/api/payment/route.ts app/api/confirm/route.ts CLAUDE.md prisma/schema.prisma prisma/migrations __tests__/utils/cart-calculations.test.ts __tests__/api/payment-route.test.ts __tests__/api/confirm-route.test.ts __tests__/utils/order-actions.test.ts
+> git diff --stat -- utils/actions.ts app/api/payment/route.ts app/api/confirm/route.ts CLAUDE.md prisma/schema.prisma prisma/migrations __tests__/utils/cart-calculations.test.ts __tests__/api/payment-route.test.ts __tests__/api/confirm-route.test.ts __tests__/utils/order-actions.test.ts
+> git ls-files --others --exclude-standard -- utils/actions.ts app/api/payment/route.ts app/api/confirm/route.ts CLAUDE.md prisma/schema.prisma prisma/migrations __tests__/utils/cart-calculations.test.ts __tests__/api/payment-route.test.ts __tests__/api/confirm-route.test.ts __tests__/utils/order-actions.test.ts
+> ```
+>
+> 1つ目はベース SHA 以降のコミット済み変更、2つ目はステージ済み未コミット変更、
+> 3つ目は未ステージの変更、4つ目は未追跡の対象領域ファイルを検出する。
+> `git status` 単独では不十分（コミット済みドリフトを検出できない）。
 > Plan 001 による `app/api/payment/route.ts` の認可チェック追加は想定内のドリフト。
-> それ以外の in-scope 変更は「Current state」と比較し、不一致は STOP。
+> それ以外で、いずれかのコマンドが Scope 内パスの変更を報告した場合は
+> 「Current state」と比較し、不一致は STOP。
 
 ## Status
 
@@ -279,7 +293,22 @@ Option B: 処理中フラグ）が使うフィールドを参照する。その�
        （読み取った値が古いまま新規セッションを作成し、他リクエストが直前に保存した
        有効な `stripeSessionId` を上書きする事態を防ぐ）。`expired` を確認する前に
        冪等キーを変えて新規作成しない。
-    作成に成功したら `session.id` を `stripeSessionId` に保存する。
+    作成に成功したら、その作成に使った試行世代（新規作成時は手順 0 到達時点の
+    `checkoutAttempt`、手順 4 のリセットを経た場合は `readCheckoutAttempt + 1`）と
+    `stripeSessionId: null` を条件にした compare-and-set で保存する:
+
+    ```ts
+    const saved = await db.order.updateMany({
+      where: { id: orderId, checkoutAttempt: usedCheckoutAttempt, stripeSessionId: null },
+      data: { stripeSessionId: session.id },
+    });
+    ```
+
+    `saved.count === 0` の場合、別リクエストが同じ試行世代の間に既に
+    `stripeSessionId` を保存済み（同一 `idempotencyKey` により同一セッションを
+    取得し先に保存した等）であることを意味する。この場合は保存済みの値を
+    上書きせず、`Order` を再読込して `stripeSessionId`/`checkoutAttempt` を
+    最新化してからレスポンスを返す。
     **作成失敗時**: `stripe.checkout.sessions.create` が例外をスローしても、
     同じ `idempotencyKey`（`checkout-${orderId}-${checkoutAttempt}`）を保持したまま
     エラーを呼び出し元に返す（`isPending` のような DB フラグは Option A では
@@ -292,47 +321,64 @@ Option B: 処理中フラグ）が使うフィールドを参照する。その�
     Stripe に渡される `idempotencyKey` が両リクエストで同一であること、および
     両リクエストが同じ `session.id` を受け取ることを検証する。
   - **Option B — Order の処理中フラグ**: `Order` モデルの `isPending Boolean @default(false)`
-    フィールドと `stripeSessionId String?` フィールド（Step 2 で追加済み）を使い、
-    セッション作成前に以下の**アトミック**な更新で「処理中」予約を確保する:
+    フィールドと `stripeSessionId String?` フィールド（Step 2 で追加済み）を使う。
+    予約の `updateMany` より**先に**、読み込み済みの Order が既に `stripeSessionId` を
+    持っていないか確認する。これを怠ると、既に `isPending: true` かつ有効な
+    `stripeSessionId` を持つ Order への正当な再リクエスト（ページ再読み込み等）が、
+    後述の再利用ロジックに到達する前に予約 `updateMany` の 409 で弾かれてしまう。
 
-    ```ts
-    const reserved = await db.order.updateMany({
-      where: { id: orderId, isPending: false, isPaid: false },
-      data: { isPending: true },
-    });
-    if (reserved.count !== 1) return new Response(null, { status: 409 });
-    ```
+    1. `order.stripeSessionId` が既に保存されている場合、
+       `stripe.checkout.sessions.retrieve(stripeSessionId)` で現在の状態を取得する
+       （予約 `updateMany` は呼ばない）。
+       - `status === 'open'` ならそのまま `clientSecret` を返す（重複 Stripe 呼び出し
+         なし、予約更新も不要）。
+       - `status === 'complete'` の場合は明示的な終端ケースとして扱い、新規作成は
+         せず、`isPaid` がまだ `false` なら confirm ルートへ委譲するか再 Checkout
+         不可のエラーを返す。
+       - `status === 'expired'` の場合のみ、以下の条件付き更新で「処理中」状態を
+         解放してから、手順 2 の予約フローに進む:
 
-    `where` に `isPaid: false` を追加することで、決済済み（`isPaid: true`）の Order に
-    対しては予約が通らず、再チェックアウトを防止できる。`updateMany` は条件を満たす
-    場合のみ更新するため、同時リクエストがゼロ件更新（`count === 0`）となり 409 で
-    拒否される。この方式は read-then-write ではなく単一の条件付き write であるため、
-    競合状態が生じない。
+         ```ts
+         await db.order.updateMany({
+           where: { id: orderId, isPending: true, isPaid: false },
+           data: { isPending: false, stripeSessionId: null },
+         });
+         // その後、通常の予約・セッション作成フローに戻る（isPending: false に
+         // 戻ったため再度 updateMany による予約が可能）
+         ```
+
+    2. `order.stripeSessionId` が存在しない場合（初回、または上記の期限切れ回収後）、
+       以下の**アトミック**な更新で「処理中」予約を確保してからセッションを作成する:
+
+       ```ts
+       const reserved = await db.order.updateMany({
+         where: { id: orderId, isPending: false, isPaid: false },
+         data: { isPending: true },
+       });
+       if (reserved.count !== 1) return new Response(null, { status: 409 });
+       ```
+
+       `where` に `isPaid: false` を追加することで、決済済み（`isPaid: true`）の Order に
+       対しては予約が通らず、再チェックアウトを防止できる。`updateMany` は条件を満たす
+       場合のみ更新するため、同時リクエストがゼロ件更新（`count === 0`）となり 409 で
+       拒否される。この方式は read-then-write ではなく単一の条件付き write であるため、
+       競合状態が生じない。手順 1 で既存の open/expired セッションを先に処理して
+       いるため、この 409 は「同時に初回作成を試みた」場合にのみ発生し、正当な
+       リトライを誤って拒否しない。
 
     **払済 Order の競合テスト**: `__tests__/api/payment-route.test.ts` に以下のテスト
     ケースを追加すること: `isPaid: true` の Order に対して payment ルートを呼ぶと
     409（または適切なエラーレスポンス）を返し、Stripe の `checkout.sessions.create` が
     呼ばれず、新しい Checkout Session が作成されないことを確認する。
 
-    **Stripe セッション ID の保存と再利用**: `stripe.checkout.sessions.create` が
-    成功したら、返却された `session.id` を `stripeSessionId` フィールドに保存する
-    (`data: { stripeSessionId: session.id }`)。以降の同一 `orderId` への再リクエスト
-    では、`isPending: true` の 409 の代わりに `stripeSessionId` の存在を確認し、
-    既存セッションを `stripe.checkout.sessions.retrieve(stripeSessionId)` で取得する。
-    取得したセッションの `status` が `'open'` の場合はそのまま `clientSecret` を返す
-    （重複 Stripe 呼び出しなし）。`status` が `'expired'` の場合は以下の回収手順を実行する:
+    **既存セッションの再利用テスト**: `isPending: true` かつ有効な `stripeSessionId`
+    を持つ Order に対して payment ルートを呼ぶと、予約 `updateMany`（および 409）を
+    経由せず `stripe.checkout.sessions.retrieve` が呼ばれ、`status === 'open'` なら
+    既存の `clientSecret` がそのまま返ることを検証する。
 
-    ```ts
-    await db.order.updateMany({
-      where: { id: orderId, isPending: true, isPaid: false },
-      data: { isPending: false, stripeSessionId: null },
-    });
-    // その後、通常のセッション作成フローに戻る（isPending: false に戻ったため
-    // 再度 updateMany による予約が可能）
-    ```
-
-    この条件付き更新（`isPaid: false` を条件に含める）により、confirm ルートが
-    `isPaid: true` に更新した後に誤って `isPending` を解放することを防ぐ。
+    **Stripe セッション ID の保存**: `stripe.checkout.sessions.create` が成功したら、
+    返却された `session.id` を `stripeSessionId` フィールドに保存する
+    (`data: { stripeSessionId: session.id }`)。
 
     **Stripe セッション作成失敗時の解放（Option B）**: `stripe.checkout.sessions.create`
     が例外をスローした場合、単純な `finally` による無条件解放は confirm ルートとの
@@ -526,7 +572,10 @@ CLAUDE.md の「価格は **セント単位の整数**（`Int`）で保存」を
       未認証なら 401、Order 所有者不一致なら 403 を返す。未完了 Order では Cart の
       所有者も照合し、不一致なら 403 で `db.order.update`/`db.cart.delete` を実行しない。
       既に isPaid な自分の Order への再訪は cart の有無に関わらず成功として扱う
-- [ ] `git status` で in-scope 外のファイルに変更がない
+- [ ] Drift check と同じ 4 コマンド（`git diff --stat <base>..HEAD`, `git diff --cached --stat`,
+      `git diff --stat`, `git ls-files --others --exclude-standard`、いずれも Scope パス限定）を
+      完了時にも実行し、コミット済み・ステージ済み・未ステージ・未追跡のいずれにも
+      in-scope 外のファイルが含まれない（`git status` 単独はコミット済み変更を見逃すため使わない）
 - [ ] `plans/README.md` のステータス行を更新済み
 
 ## STOP conditions

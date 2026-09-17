@@ -11,16 +11,18 @@
 > **Drift check (最初に実行)**: 以下の 4 コマンドをすべて実行する:
 >
 > ```sh
-> git diff --stat 90f91f4..HEAD -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md plans/003-payment-flow-consistency.md next.config.mjs
-> git diff --cached --stat -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md plans/003-payment-flow-consistency.md next.config.mjs
-> git diff --stat -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md plans/003-payment-flow-consistency.md next.config.mjs
-> git ls-files --others --exclude-standard -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md plans/003-payment-flow-consistency.md next.config.mjs
+> git diff --stat 90f91f4..HEAD -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md plans/003-payment-flow-consistency.md plans/README.md next.config.mjs
+> git diff --cached --stat -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md plans/003-payment-flow-consistency.md plans/README.md next.config.mjs
+> git diff --stat -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md plans/003-payment-flow-consistency.md plans/README.md next.config.mjs
+> git ls-files --others --exclude-standard -- app/ utils/actions.ts utils/links.ts prisma/schema.prisma package.json CLAUDE.md plans/004-data-integrity-and-performance.md plans/003-payment-flow-consistency.md plans/README.md next.config.mjs
 > ```
 >
 > 1つ目はベース SHA 以降のコミット済み変更、2つ目はステージ済み未コミット変更、
 > 3つ目は未ステージの変更、4つ目は未追跡の対象領域ファイルを検出する。
-> いずれかが対象領域の変更を報告したら、各項目の Evidence を再確認し、
-> 食い違いがあれば停止すること。
+> `plans/README.md` を含めているのは、6-1〜6-6 の `Selected`/`Status` 値がこのファイルの
+> 「Plan 006 item selection & status」表で管理されているため。いずれかが対象領域の
+> 変更を報告したら、`plans/README.md` の差分であれば当該表の選択・状態変更を、
+> それ以外であれば各項目の Evidence を再確認し、食い違いがあれば停止すること。
 
 ## Status
 

@@ -176,12 +176,14 @@ SQL
 
   ```ts
   await db.$transaction(async (tx) => {
-    const cart = await tx.cart.findFirst({ where: { clerkId: userId }, include: includeProductClause });
+    const cart = await tx.cart.findFirst({ where: { clerkId: user.id }, include: includeProductClause });
     if (!cart) throw new Error("Cart not found");
     await updateOrCreateCartItem(cart.id, productId, amount, tx);
     await updateCart(cart, tx);
   }, { isolationLevel: "Serializable" });
   ```
+
+  `user` は `addToCartAction` 冒頭の `const user = await getAuthUser();`（`utils/actions.ts:491`）を指す。
 
   `cart` オブジェクトを `updateCart` に渡すことで既存の `updateCart(cart: Cart)` シグネチャと
   整合する。`updateCart(cartId, tx)` のように `cartId` を直接渡す形は、`updateCart` の
