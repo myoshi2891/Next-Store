@@ -16,7 +16,7 @@ STOP conditions を厳守し、完了時に自分の行のステータスを更�
 | [003](003-payment-flow-consistency.md) | 決済フローの金額整合性と状態遷移の修正 | P1 | M | 002 | TODO |
 | [004](004-data-integrity-and-performance.md) | DB 整合性制約とホットパス性能改善 | P2 | M | 002, 003 | TODO |
 | [005](005-dx-deps-docs-cleanup.md) | DX・依存関係・ドキュメント整備 | P2 | M | — | TODO |
-| [006](006-product-direction-roadmap.md) | プロダクトロードマップ（設計スパイク束） | P3 | 項目別 | 項目ごとに個別評価（下表参照） | TODO — selected scope: none |
+| [006](006-product-direction-roadmap.md) | プロダクトロードマップ（設計スパイク束） | P3 | 項目別 | 項目ごとに個別評価（下表参照） | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED（理由 1 行）| REJECTED（理由 1 行）| STALE（より新しいプランまたは並行変更に追い越された — 理由 1 行）| NOT SELECTED（意図的に対象外 — Plan 006 の未選択スパイク項目に使用）
 
@@ -38,7 +38,8 @@ Plan 006 のこの表での上位 Status は、下表「Plan 006 item selection 
 Select an item by changing `Selected` to `Yes` and its status to `IN PROGRESS`
 before its spike begins. `NOT SELECTED` items are intentionally out of scope.
 Plan 006 is DONE when at least one item is selected and every selected item is
-DONE; unselected items do not block completion.
+DONE; unselected items do not block completion. Current selected scope: none
+(all items below are `NOT SELECTED`).
 
 | Item | Title | Selected | Status | Notes |
 |------|-------|----------|--------|-------|

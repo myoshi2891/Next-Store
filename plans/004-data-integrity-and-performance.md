@@ -94,13 +94,39 @@
 
 ## Steps
 
-### Step 1: スキーマに制約とインデックスを追加
+### Step 1: Serializable 対応確認とスキーマへの制約・インデックス追加
+
+**まず Serializable 分離レベルが実際に使えるか確認する**（この結果で、下記の
+スキーマ変更に `Cart.version` を含めるかどうかが決まる。Step 3 で一度だけ
+マイグレーションを実行するため、判定はスキーマ編集より前に行うこと）。
+
+Supabase 環境で Serializable が使えるかどうかは、実際に使う **Prisma Client の
+interactive transaction** で確認する（`bunx prisma db execute` は単発の raw SQL
+実行であり、PgBouncer のトランザクションプーリングモード配下で
+`db.$transaction` が直面する接続経路とは異なるため、これだけでは正しく検証
+できない）。同一の `DATABASE_URL` を使う Prisma Client で以下のような
+使い捨てスクリプトを実行し、エラーなく完了するか確認する:
+
+```ts
+await db.$transaction(async (tx) => {
+  await tx.cart.findMany({ take: 1 });
+}, { isolationLevel: "Serializable" });
+```
+
+エラー（Serializable 未対応や接続エラー）が発生した場合はフォールバック方式
+（`Cart.version` 楽観的ロック、Step 4 で使用）を選択する。このプリフライト確認を
+省略する場合は、Step 4 で最初に実行される実際の interactive transaction が
+失敗した時点で STOP し、フォールバック方式へ切り替えること（未検証のまま
+Serializable ありきで進めない）。
 
 `prisma/schema.prisma` に追加:
 
 - `Favorite`: `@@unique([clerkId, productId])`
 - `CartItem`: `@@unique([cartId, productId])`, `@@index([productId])`
-- `Cart`: `@@unique([clerkId])`
+- `Cart`: `@@unique([clerkId])`。**上記の確認で Serializable が使えないと判明した
+  場合はここで `version Int @default(0)` も追加する**（Step 4 の楽観的ロック
+  フォールバックで使用。Step 3 のマイグレーションに含めるため、ここで追加しないと
+  後から別マイグレーションが必要になる）。
 - `Review`: `@@index([productId])`, `@@index([clerkId])`
 - `Order`: `@@index([clerkId, isPaid])`
 
@@ -205,10 +231,12 @@ SQL
   する。成功後もループを継続する実装は、`CartItem` の increment や集計値の更新が
   複数回適用される不整合を招くため避けること。
 
-  **Serializable を利用できない環境向けのフォールバック**:
+  **Serializable を利用できない環境向けのフォールバック**（Step 1 で Serializable
+  が使えないと判定した場合のみ実施。判定と `Cart.version` カラムの追加は
+  Step 1 で完了済みであることが前提）:
   Supabase PgBouncer のトランザクションプーリングモード等で Serializable が
-  使えない場合は、Cart に `version Int @default(0)` バージョンカラムを追加し、
-  `updateCart` を上記の再試行ループの**各イテレーション内**で以下のように実装する:
+  使えない場合は、`updateCart` を上記の再試行ループの**各イテレーション内**で
+  以下のように実装する:
   1. `tx` を使って Cart と CartItem を再読込し、現在の `version` と最新の
      `cartItems`/`product` から `numItemsInCart`/`cartTotal`/`orderTotal` を
      その場で再計算する（呼び出し元から渡された古い `cart` オブジェクトの値は
@@ -221,23 +249,21 @@ SQL
   4. `result.count === 1` なら成功として、再読込した `version + 1` と再計算済みの
      集計値をそのイテレーションの戻り値とする。
 
-  **Cart.version マイグレーション要件**: このフォールバックを選択する場合は
-  `Cart` モデルへの `version Int @default(0)` カラム追加を
-  **本 Plan 004 の Scope・Step 1・Done criteria** に含め、Step 3 のマイグレーション
-  （`bunx prisma migrate dev`）と同一の実行で適用すること。Serializable が
-  利用できない環境でこのカラムがない場合は楽観的ロックを実装できないため STOP し、
-  `version` カラムのマイグレーションを先に行うか、接続プール設定を変更して
-  Serializable を有効化する手順を確認してから再開すること。
+  `Cart.version` カラムの追加と Serializable 可否の判定は Step 1 で完了済み
+  （このカラムは Step 3 のマイグレーションに含まれている）。
 
-  **STOP 条件**: Supabase 環境で Serializable が実際に使えるかどうかは
-  実行前に `bunx prisma db execute --stdin <<'SQL'
-  BEGIN ISOLATION LEVEL SERIALIZABLE; ROLLBACK;
-  SQL` で確認すること。エラーが返る場合はフォールバック方式を選択する。
-
-  **回帰テスト**: 異なる商品 A と B を同時追加した場合（2 並列の `addToCartAction` をモックで再現）に
-  CartItem が 2 件、`numItemsInCart` が 2、`cartTotal` が `priceA + priceB`、
-  `orderTotal` が `cartTotal + tax + shipping` と一致することを確認するテストを
-  `__tests__/utils/cart-concurrent.test.ts` に追加する。
+  **回帰テスト**: 異なる商品 A と B を同時追加した場合（2 並列の `addToCartAction` を
+  モックで再現）に CartItem が 2 件、`numItemsInCart` が 2、`cartTotal` が
+  `priceA + priceB`、`orderTotal` が `cartTotal + tax + shipping` と一致することを
+  確認するモックベースの単体テストを `__tests__/utils/cart-concurrent.test.ts` に
+  追加する。**加えて**、実際の PostgreSQL に対して 2 つの `addToCartAction` 呼び出しを
+  本物の Prisma Client で並行実行する統合テストを追加し、モックでは検証できない
+  トランザクション分離レベルの実際の挙動（Serializable 使用時の直列化失敗
+  `P2034` とその再試行、失敗時のロールバック、フォールバック選択時は
+  `Cart.version` の楽観的ロック衝突）を確認する。このテストも同じ 2 件の
+  CartItem / `numItemsInCart` / `cartTotal` / `orderTotal` の一致を検証する。
+  実 DB 接続が必要なテストのため、`DATABASE_URL` が利用できる環境でのみ実行する
+  構成（別ファイル・別スクリプトへの分離等）にしてよい。
 
 
 **Verify**: `bun run test` → 全パス（Plan 002 のカート計算テスト含む）
@@ -361,7 +387,7 @@ SQL
 
 - [ ] `bunx prisma validate` が valid
 - [ ] `prisma/migrations/` に新規マイグレーションがコミットされている
-- [ ] Step 4 で Serializable フォールバックを選択した場合のみ: `Cart.version` が
+- [ ] Step 1 で Serializable フォールバックを選択した場合のみ: `Cart.version` が
       `prisma/schema.prisma` と対応するマイグレーションに含まれ、`updateCart` の
       `version` 検証（compare-and-set）テストが追加されている
 - [ ] `grep -n "upsert" utils/actions.ts` がヒットする

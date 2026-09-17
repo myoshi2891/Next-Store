@@ -277,19 +277,34 @@ Option B: 処理中フラグ）が使うフィールドを参照する。その�
        `create` はいずれも行わず、支払い済みである旨のエラー（再 Checkout 不可）を
        返して終了する。
     0.5. **予約（Stripe 呼び出し前）**: `stripeSessionId` が未保存（初回リクエスト）
-       の場合、Stripe を呼び出す**前**に `checkoutAttempt` をインクリメントする
-       アトミックな条件付き更新で Order を予約する:
+       の場合、Stripe を呼び出す**前**に `checkoutAttempt` の `0→1` 遷移
+       （Order ごとに一度だけ成立する）をアトミックな条件付き更新で予約する:
 
        ```ts
        const reserved = await db.order.updateMany({
-         where: { id: orderId, isPaid: false, checkoutAttempt: readCheckoutAttempt, stripeSessionId: null },
+         where: { id: orderId, isPaid: false, checkoutAttempt: 0, stripeSessionId: null },
          data: { checkoutAttempt: { increment: 1 } },
        });
        ```
 
-       `reserved.count === 0` の場合は別リクエストが先に予約済みのため、Order を
-       再読込して手順 1 からやり直す。`reserved.count === 1` の場合のみ
-       `readCheckoutAttempt + 1` を `usedCheckoutAttempt` として Stripe を呼び出す。
+       **`readCheckoutAttempt` ではなく固定値 `0` を条件にすること**: 各リクエストが
+       読み取った時点の `checkoutAttempt`（`readCheckoutAttempt`）を条件にすると、
+       ほぼ同時に読み込んだ複数リクエストがそれぞれ異なる値で予約に成功し、
+       別々の `checkoutAttempt`（＝別々の `idempotencyKey`）で Stripe を並行に
+       呼び出してしまい、同一 Order に対して複数の Checkout Session が
+       作成される（この Step が防ごうとしている問題そのものが再発する）。
+       固定値 `0` を条件にすることで、この予約は Order ごとに厳密に一度しか
+       成立しない。
+       `reserved.count === 1` の場合のみ、このリクエストが予約者であり `1` を
+       `usedCheckoutAttempt` として Stripe を呼び出す。
+       `reserved.count === 0` の場合は既に別リクエストが予約済み
+       （`checkoutAttempt >= 1`）であることを意味する。Order を再読込し、
+       `stripeSessionId` が依然として `null` なら**新たな予約は行わず**、
+       再読込した `checkoutAttempt` をそのまま `usedCheckoutAttempt` として
+       同じ `idempotencyKey`（`checkout-${orderId}-${usedCheckoutAttempt}`）で
+       Stripe を呼び出す（Stripe 側の冪等キーが同一セッションへ収束させるため、
+       DB 側でこれ以上の調整は不要）。`stripeSessionId` が既に保存されていれば
+       手順 1 以降（取得・再利用フロー）に進む。
        この予約により、`createOrderAction`（Step 3）の未払い Order 削除は
        `checkoutAttempt: 0` を除外条件とするため、Stripe 応答待ちの間
        （`stripeSessionId` がまだ書き込まれていない区間）もこの Order を
@@ -548,36 +563,54 @@ Order と Cart の関係が一致しない 400、無効/未許可の origin で 
 - Order がまだ `isPaid !== true`（未完了）の場合、まず `paymentConfirmed` を検査する:
   偽（未完了・未払いの Session）なら `db.$transaction` を実行せず、Order 更新も
   Cart 削除も一切行わずに終了し、400（または適切なエラーレスポンス）を返す。
-  以下の `cartId` 一致検証とトランザクション処理は `paymentConfirmed` が真の
-  場合にのみ実施する: `paymentConfirmed` が真と判定された直後、`db.$transaction`
-  を開始する前に、`session.amount_total` と `order.orderTotal * 100` を照合する。
-  一致しない場合は 400 を返し、Order・Cart のいずれも変更せずに終了する
-  （Order 作成後に商品価格が変わった、またはセッションが別注文のものである
-  ケースの早期検知 — Step 4 で追加するセッション作成時のアサーションと対になる）。
-  金額が一致した場合のみ、Cart を取得した後かつ
-  `db.$transaction` 実行前に、`order.cartId`（DB に永続化済み）と
-  `session.metadata.cartId`（Stripe メタデータ由来）が一致することを検証する。
-  不一致の場合は 400 を返し、Order 更新も Cart 削除も行わない。
-  その後、従来どおり `db.cart.findUnique` で Cart を読み込み、存在し
-  `cart.clerkId === userId` であることを確認してから未完了 Order 分岐内で
-  `db.order.update` と `db.cart.delete` を実行する。
-  **この 2 操作は必ず `db.$transaction(async (tx) => { ... })` で包むこと**:
-  どちらかが失敗した場合に両方がロールバックされ、「Order が paid になったが Cart が
-  残る」または「Cart が消えたが Order が unpaid のまま」という不整合が生じない。
+  以下のトランザクション処理は `paymentConfirmed` が真の場合にのみ実施する:
+  `paymentConfirmed` が真と判定された直後、`db.$transaction` を開始する前に、
+  `session.amount_total` と `order.orderTotal * 100` を照合する。一致しない場合は
+  400 を返し、Order・Cart のいずれも変更せずに終了する（Order 作成後に商品価格が
+  変わった、またはセッションが別注文のものであるケースの早期検知 — Step 4 で
+  追加するセッション作成時のアサーションと対になる）。
+  **Order/Cart の再取得・所有権チェック・`cartId` 一致検証・更新・削除は、
+  すべて同一の `Serializable` な `db.$transaction(async (tx) => { ... },
+  { isolationLevel: "Serializable" })` コールバック内で行うこと**（トランザクション外で
+  読んだ Order/Cart を使って検証すると、検証と書き込みの間に別リクエストが状態を
+  変更できてしまい、Serializable 分離レベルの衝突検知が検証部分をカバーしない）。
+  トランザクション内で:
+  1. `tx.order.findUnique` で Order を再読込し、`order.clerkId === userId` を
+     再確認する（一致しなければ 403 相当のエラーを投げてロールバックする）。
+  2. `order.cartId`（DB に永続化済み）と `session.metadata.cartId`（Stripe
+     メタデータ由来）が一致することを検証する（不一致なら 400 相当のエラーを
+     投げてロールバックする）。
+  3. `tx.cart.findUnique` で Cart を再読込し、存在し `cart.clerkId === userId`
+     であることを確認する（存在しない、または所有者不一致なら 403 相当のエラーを
+     投げてロールバックする）。
+  4. `tx.order.update({ where: { id: orderId }, data: { isPaid: true } })` を実行する。
+  5. `tx.cart.deleteMany({ where: { id: cart.id } })` を実行し、戻り値の `count` が
+     `1` でなければエラーを投げてトランザクション全体をロールバックする
+     （この未完了 Order 分岐に到達した時点で Cart が既に消えているのは想定外の
+     状態であり、`0` 件削除を無視して成功扱いにしない — 冪等な再訪は上記の
+     `isPaid === true` 分岐で別途処理済み）。
+
   実装例:
 
   ```ts
   await db.$transaction(async (tx) => {
+    const order = await tx.order.findUnique({ where: { id: orderId } });
+    if (!order || order.clerkId !== userId) throw new ForbiddenError();
+    if (order.cartId !== session.metadata.cartId) throw new BadRequestError();
+    const cart = await tx.cart.findUnique({ where: { id: order.cartId } });
+    if (!cart || cart.clerkId !== userId) throw new ForbiddenError();
     await tx.order.update({ where: { id: orderId }, data: { isPaid: true } });
-    await tx.cart.deleteMany({ where: { id: cartId } });
-  });
+    const deleted = await tx.cart.deleteMany({ where: { id: cart.id } });
+    if (deleted.count !== 1) throw new Error("cart already removed");
+  }, { isolationLevel: "Serializable" });
   ```
 
-  Cart が存在しない、または所有者が一致しない場合は 403 を返し、更新・削除のいずれも行わない。
-- `db.cart.delete` は上記の未完了 Order 分岐の**内側**の `$transaction` ブロックに移動する
-  （未完了セッションでカートを消さない）。cart が既に削除済み（リロード等での再訪）の場合に
-  Prisma の P2025 エラーで 500 にならないよう `deleteMany({ where: { id: cartId } })` を
-  使う（冪等化）。`deleteMany` はゼロ件削除でも例外を投げない。
+  上記でスローされたエラーは呼び出し元でキャッチし、対応する HTTP ステータス
+  （403 / 400 / 500）に変換して返す。トランザクションがロールバックされた場合、
+  Order の `isPaid` も Cart の削除も反映されない。
+  **既に `isPaid === true` の冪等分岐（上記）は、このトランザクションとは独立に
+  扱う**: 支払い済み Order への再訪ではこのトランザクションを実行せず、既存の
+  成功扱い（cart が既に削除済みでも 403 にせず `/orders` へ redirect）を維持する。
 
 Plan 002 の `confirm-route.test.ts` の期待値を更新:
 未完了セッション、無効な metadata、`orderId` の所有者が呼び出しユーザーと一致しない
