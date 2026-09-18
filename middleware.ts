@@ -1,25 +1,25 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
-const isPublicRoute = createRouteMatcher(["/", "/products(.*)", "/about"]);
-const isAdminRoute = createRouteMatcher(["/admin(.*)"]);
+export const isPublicRoute = createRouteMatcher(["/", "/products(.*)", "/about"]);
+export const isAdminRoute = createRouteMatcher(["/admin(.*)"]);
 
-export default clerkMiddleware((auth, req) => {
-	const isAdminUser = auth().userId === process.env.ADMIN_USER_ID;
+export function isAdminUser(userId: string | null) {
+	return userId === process.env.ADMIN_USER_ID;
+}
 
-	if (isAdminRoute(req) && !isAdminUser) {
+export default clerkMiddleware(async (auth, req) => {
+	const { userId } = await auth();
+
+	if (isAdminRoute(req) && !isAdminUser(userId)) {
 		return NextResponse.redirect(new URL("/", req.url));
 	}
 
 	if (!isPublicRoute(req)) {
-		const result = auth().protect(); // ★ protectを呼んで
-		if (result instanceof NextResponse) {
-			return result; // ★ NextResponseだったら返す
-		}
-		// ★ それ以外は何もしない (＝認証OKなので続行)
+		await auth.protect();
 	}
 
-	return NextResponse.next(); // ★ 忘れずに普通に次へ
+	return NextResponse.next();
 });
 
 export const config = {

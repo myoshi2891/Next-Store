@@ -12,7 +12,13 @@ bun dev
 bun run build
 
 # Lintチェック
-bun lint
+bun run lint
+
+# テスト実行
+bun run test
+
+# テスト（watchモード）
+bun run test:watch
 
 # DBマイグレーション
 bunx prisma migrate dev
@@ -26,19 +32,20 @@ bunx prisma studio
 
 ## Architecture
 
-Next.js 14 App Router を使用した e-commerce アプリ（"Next Store"）。
+Next.js 16 App Router を使用した e-commerce アプリ（"Next Store"）。
 
 ### 技術スタック
 
 | 役割 | ライブラリ |
 |---|---|
-| フレームワーク | Next.js 14 (App Router) |
-| 認証 | Clerk (`@clerk/nextjs`) |
+| フレームワーク | Next.js 16 (App Router, Turbopack) |
+| 認証 | Clerk v7 (`@clerk/nextjs`) |
 | DB ORM | Prisma + PostgreSQL (Supabase) |
 | ストレージ | Supabase Storage（商品画像） |
 | 決済 | Stripe Embedded Checkout |
 | UI | shadcn/ui (Radix UI + Tailwind CSS) |
 | バリデーション | Zod |
+| テスト | Vitest + React Testing Library (jsdom) |
 
 ### データモデル（`prisma/schema.prisma`）
 
@@ -56,8 +63,11 @@ Next.js 14 App Router を使用した e-commerce アプリ（"Next Store"）。
 
 ### 認証・認可（`middleware.ts`）
 
+> **注意**: Next.js 16 では `middleware` → `proxy` に改名が推奨されている（現在は middleware でも動作、deprecation warning あり）
+
 - パブリックルート: `/`, `/products(.*)`, `/about`
 - 管理者ルート: `/admin(.*)` → `ADMIN_USER_ID` 環境変数と一致するClerkユーザーIDのみ許可
+- `auth()` は非同期: `const { userId } = await auth()`
 
 ### 決済フロー
 
@@ -76,7 +86,7 @@ app/                   # Next.js App Router ページ
 components/
   cart/                # カート画面コンポーネント
   form/                # 再利用フォーム部品（FormContainer, Buttons等）
-  global/              # Container, EmptyList等の汎用コンポーネント
+  global/              # Container, EmptyList, DisclaimerBanner等
   navbar/              # ナビゲーションバー一式
   products/            # 商品一覧・お気に入り
   reviews/             # レビュー表示・投稿
@@ -87,10 +97,17 @@ utils/
   db.ts                # Prismaクライアントシングルトン
   schemas.ts           # Zodスキーマ定義
   supabase.ts          # Supabase Storage 画像アップロード/削除
-  types.ts             # 共有型定義
+  types.ts             # 共有型定義（actionFunction等）
   format.ts            # 価格フォーマット等のユーティリティ
   links.ts             # ナビゲーションリンク定義
 lib/utils.ts           # shadcn/ui の cn() ユーティリティ
+__tests__/             # Vitest テスト
+  components/          # コンポーネントテスト
+  config/              # next.config テスト
+  middleware/           # ミドルウェアテスト
+  migration/           # 移行検証テスト
+  security/            # セキュリティ検証テスト
+  utils/               # ユーティリティテスト
 ```
 
 ## 環境変数
@@ -108,7 +125,13 @@ NEXT_PUBLIC_CLERK_*  # Clerk 設定（publishable key等）
 
 ## コーディング規約
 
-- **フォームの状態管理**: `useFormState` (React) + Server Action のパターンで統一
+- **フォームの状態管理**: `useActionState` (React 19) + Server Action のパターンで統一
+- **Server Action の prevState**: `prevState: { message: string }`（`any` 禁止）
+- **非同期 API**: `params`, `searchParams`, `auth()` はすべて `await` が必要
+- **useSearchParams**: `<Suspense>` boundary 内で使用すること
 - **画像バリデーション**: 最大1MB、`image/*` のみ（`utils/schemas.ts` の `imageSchema`）
+- **画像最適化**: `next.config.mjs` の `remotePatterns` に `pathname` 制限を設定すること
 - **価格**: DB・Stripe通信ともにセント整数。表示時は `utils/format.ts` でフォーマット
 - **管理者確認**: admin操作の Server Action 冒頭で必ず `await getAdminUser()` を呼ぶ
+- **Clerk コンポーネント**: `<Show when="signed-in">` / `<Show when="signed-out">` を使用（`SignedIn`/`SignedOut` は Clerk v7 で削除済み）
+- **テスト**: Vitest + React Testing Library。AAA パターン（Arrange-Act-Assert）
