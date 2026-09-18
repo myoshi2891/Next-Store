@@ -5,7 +5,17 @@
 > いずれかが発生したら、即座に停止して報告する。完了したら `plans/README.md` の
 > ステータス行を更新する。
 >
-> **Drift check (最初に実行)**: `git diff --stat 90f91f4..HEAD -- prisma/schema.prisma utils/actions.ts components/products/ app/cart/page.tsx`
+> **Drift check (最初に実行)**: 以下の 4 コマンドをすべて同じパス指定で実行する
+> （Done criteria の drift check もこの同一パス指定を再利用する — `git status`
+> 単独では不十分）:
+>
+> ```sh
+> git diff --stat 90f91f4..HEAD -- prisma/schema.prisma utils/actions.ts components/products/ app/cart/page.tsx
+> git diff --cached --stat -- prisma/schema.prisma utils/actions.ts components/products/ app/cart/page.tsx
+> git diff --stat -- prisma/schema.prisma utils/actions.ts components/products/ app/cart/page.tsx
+> git ls-files --others --exclude-standard -- prisma/schema.prisma utils/actions.ts components/products/ app/cart/page.tsx
+> ```
+>
 > Plan 001/003 による `utils/actions.ts` の変更（認可チェック、丸め処理）は
 > 想定内のドリフト。それ以外は「Current state」と比較し、不一致は STOP。
 
@@ -237,7 +247,18 @@ SQL
   }, txOptions);
   ```
 
-  `isSerializableSupported` は Step 1 のプリフライト確認結果を保持する定数/設定値を指す。
+  `isSerializableSupported` は Step 1 のプリフライト確認結果をプロセス内で 1 度だけ
+  確定してキャッシュする値であり、毎リクエスト再判定しない。実装は例えば
+  `utils/db.ts` に `let cached: Promise<boolean> | undefined;` を持つ
+  `getIsSerializableSupported()` を追加し、初回呼び出し時のみ Step 1 と同じ
+  interactive transaction プローブを実行してその `Promise` をキャッシュする形にする。
+  Serializable 未対応を明示するエラーなら `false`、成功なら `true` を返す。
+  接続断・認証失敗など判定不能なエラーが発生した場合は `false` にフォールバックせず、
+  そのエラーを再 throw して呼び出し元（`addToCartAction` / `updateProductAction` /
+  `deleteProductAction`）を失敗させる（Step 1 の「判定不能なエラーを『未対応』と
+  誤認してフォールバックに切り替えると実際には使える Serializable を放棄する」という
+  方針を、実行時の判定でも一貫させるため）。この関数は Step 4・7b・7c のすべての
+  `db.$transaction` 呼び出し箇所から共通で呼び出す。
   `user` は `addToCartAction` 冒頭の `const user = await getAuthUser();`（`utils/actions.ts:491`）を指す。
 
   `cart` オブジェクトを `updateCart` に渡すことで既存の `updateCart(cart: Cart)` シグネチャと
@@ -336,6 +357,18 @@ SQL
 `fetchOrCreateCart` の戻り値（保存済み totals + cartItems）をそのまま表示に使う。
 `CartTotals` / `CartItemsList` へ渡す props の形を合わせる。
 
+`removeCartItemAction`（`utils/actions.ts:506-529`）と `updateCartItemAction`
+（`utils/actions.ts:531-559`）は現状、`db.cartItem.delete`/`update` と
+`updateCart(cart)` を別々の呼び出しとして実行しており（`$transaction` で
+包まれていない）、Step 4 で `addToCartAction` に適用したのと同じ非アトミック性の
+問題を抱える。この 2 つのアクションも Step 4 と同じパターンに変更する:
+CartItem の変更（delete/update）と `updateCart(cart, tx)` 呼び出しを同一の
+`db.$transaction(async (tx) => { ... })` に包み、`isSerializableSupported` に
+応じて `{ isolationLevel: "Serializable" }` を渡すか `Cart.version` の
+compare-and-set フォールバックを使う。`P2034` / `OptimisticLockConflictError` は
+Step 4 と同じ再試行ループ（最大 3 回）で捕捉する。CartItem だけが保存されて
+集計更新が失われる、または逆に集計更新だけが古い値で残る経路を許可しない。
+
 **7b — 商品価格変更後のカート再計算**
 
 `utils/actions.ts` の `updateProductAction`（商品更新アクション）内で、
@@ -390,7 +423,15 @@ SQL
 `deleteProductAction`（`utils/actions.ts:110-123`）が商品を削除すると該当
 `CartItem` 行は DB 側で自動削除されるが、親 `Cart` の `numItemsInCart` /
 `cartTotal` / `orderTotal`（キャッシュされた集計値）は再計算されず、削除された
-商品分だけ過大な値のまま残る。`deleteProductAction` を以下のように変更する:
+商品分だけ過大な値のまま残る。`deleteProductAction` を以下のように変更する。
+**7b と同じ並行制御を適用する**: 下記 1〜3 全体を包む `db.$transaction` の
+第 2 引数は `isSerializableSupported` が true なら `{ isolationLevel: "Serializable" }`、
+false なら省略（`updateCart(cart, tx)` 内の `Cart.version` compare-and-set に委ねる）。
+呼び出し全体を Step 4 と同じ `P2034`（`SQLSTATE 40001`）/ `OptimisticLockConflictError`
+再試行ループ（最大 3 回、成功したら即座に抜ける）で包み、競合時は商品削除
+（`tx.product.delete`）と Cart 集計更新の両方を同じイテレーションでまとめて
+再実行する。これを怠ると、削除自体は成功したのに集計更新だけ古い `CartItem`
+一覧を前提に別トランザクションの結果を上書きするケースが起こり得る:
 
 1. `db.product.delete` の**前**に、同一 `db.$transaction(async (tx) => { ... })`
    内で対象 `productId` を含む `CartItem` を持つ全 Cart を特定する（7b と同じ
@@ -437,7 +478,11 @@ SQL
 - [ ] `grep -n "upsert" utils/actions.ts` がヒットする
 - [ ] `grep -rn "fetchFavoriteId(" components/products/FavoriteToggleButton.tsx` → 0 件
 - [ ] `bun run test` / `bunx tsc --noEmit` / `bun run lint` がすべて exit 0
-- [ ] `git status` で in-scope 外のファイルに変更がない
+- [ ] 冒頭の Drift check と同一パス指定の 4 コマンド（`git diff --stat 90f91f4..HEAD`、
+      `git diff --cached --stat`、`git diff --stat`、`git ls-files --others --exclude-standard`、
+      いずれも `-- prisma/schema.prisma utils/actions.ts components/products/ app/cart/page.tsx`）
+      のいずれにも in-scope 外のファイルが含まれない（`git status` 単独では
+      コミット済み・ステージ済みドリフトを見落とすため使わない）
 - [ ] `plans/README.md` のステータス行を更新済み
 
 ## STOP conditions

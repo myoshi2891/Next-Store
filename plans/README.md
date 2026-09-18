@@ -67,14 +67,21 @@ Plan 006 is DONE when at least one item is selected and every selected item is
 DONE; unselected items do not block completion. Current selected scope: none
 (all items below are `NOT SELECTED`).
 
-| Item | Title | Selected | Status | Notes |
-|------|-------|----------|--------|-------|
-| 6-1 | Stripe Webhook による決済確定 | No | NOT SELECTED | Requires Plan 003 |
-| 6-2 | 注文詳細ページ | No | NOT SELECTED | Requires Plan 003 |
-| 6-3 | 注文確認メール | No | NOT SELECTED | Prefer after 6-1 |
-| 6-4 | 管理ダッシュボードの実体化 | No | NOT SELECTED | — |
-| 6-5 | レビュー編集 | No | NOT SELECTED | — |
-| 6-6 | 商品ディスカバリの拡張 | No | NOT SELECTED | — |
+| Item | Title | Selected | Status | 1xx Plan | Notes |
+|------|-------|----------|--------|----------|-------|
+| 6-1 | Stripe Webhook による決済確定 | No | NOT SELECTED | — | Requires Plan 003 |
+| 6-2 | 注文詳細ページ | No | NOT SELECTED | — | Requires Plan 003 |
+| 6-3 | 注文確認メール | No | NOT SELECTED | — | Prefer after 6-1 |
+| 6-4 | 管理ダッシュボードの実体化 | No | NOT SELECTED | — | — |
+| 6-5 | レビュー編集 | No | NOT SELECTED | — | — |
+| 6-6 | 商品ディスカバリの拡張 | No | NOT SELECTED | — | — |
+
+項目が選択され個別の 1xx プランが作成された時点で、上記「1xx Plan」列に
+そのプランへの相対パス（例: `007-stripe-webhook-confirmation.md`）を記録する。
+同じプランは、作成と同時にこの README 冒頭の「Execution order & status」表にも
+正確なパスで登録し、依存関係の列に基づいて実行順序表へ組み込むこと —
+`execute` と `reconcile` はどちらもこの表を参照して 1xx プランの所在と
+実行順序を判断する。
 
 ## Dependency notes
 

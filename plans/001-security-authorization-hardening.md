@@ -292,6 +292,11 @@ Step 5 で新設した非同期画像検証経路（`validateWithZodSchemaAsync`
 - [ ] `grep -n "authorName\|authorImageUrl" components/reviews/SubmitReview.tsx` が 0 件
   （どちらもクライアント発の hidden input であり、`createReviewAction` 側で
   `user.firstName`/`user.imageUrl` に置き換える対象のため、片方だけでは不十分）
+- [ ] Step 7 の並行リクエスト排他性検証について、次のいずれかを記録している:
+  テスト用 DB を用意して統合テストを実施した場合は、同一 `clerkId`・`productId` の
+  同時 `createReviewAction` 実行で片方のみ成功したことを確認済みである旨。テスト用
+  DB を用意できず `P2002` モック単体テストのみを実施した場合は、重複投稿の拒否は
+  検証済みだが並行実行時の排他性そのものは未検証である旨。
 - [ ] Drift check の 4 コマンド（`git diff --stat 90f91f4..HEAD`、`git diff --cached --stat`、
   `git diff --stat`、`git ls-files --others --exclude-standard`、いずれも同じ in-scope パス指定）
   のいずれにも in-scope 外のファイルが含まれない（`git status` 単独では
