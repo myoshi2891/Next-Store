@@ -152,7 +152,10 @@ Machine-checkable. ALL must hold:
 
 - [ ] The Typecheck command from "Commands you will need" exits 0
 - [ ] The Tests command from "Commands you will need" exits 0; new tests for <X> exist and pass
-- [ ] `grep -rn "<old pattern>" src/` returns no matches
+- [ ] `grep -rn "<old pattern>" <recon-confirmed target path(s)>` returns no
+  matches — replace both placeholders with values confirmed during recon
+  against this repository (its source layout may not use `src/`); the
+  resulting command must be one the executor can run verbatim
 - [ ] No files outside the in-scope list are modified — run all four commands and confirm each reports no in-scope path outside the list:
   - `git diff --stat <planned-at SHA>..HEAD` (committed since plan's base)
   - `git diff --cached --stat` (staged)
