@@ -81,7 +81,7 @@ Running verification commands inside the executor's worktree is fine — it's is
 
 Process what happened since the last session. Read `<chosen-dir>/README.md` and every plan file, then per status:
 
-- **DONE** — spot-check that the done criteria still hold on the current HEAD (cheap ones only). Mark verified in the index. Don't delete plan files — they're the record.
+- **DONE** — spot-check that the done criteria still hold on the current HEAD (cheap ones only). Record the result *without* changing the Status cell — `<chosen-dir>/README.md`'s Status vocabulary has no `VERIFIED` value, so a spot-check must never overwrite `DONE` with one. Instead append a one-line note (date + outcome) to the plan file's own Maintenance notes section, or to an index Notes/Verified column if `<chosen-dir>/README.md` already has one. Don't delete plan files — they're the record.
 - **BLOCKED** — read the reason. Investigate the underlying obstacle in the codebase. Either rewrite the plan around it (new number if the approach changed fundamentally, in-place refresh otherwise) or mark REJECTED with one line of rationale.
 - **STALE** — same handling as BLOCKED: investigate what overtook the plan (a newer plan or concurrent change, per its one-line reason), then either rewrite it around the new state or mark REJECTED with one line of rationale. Update both the plan file and `<chosen-dir>/README.md` index — don't leave a STALE plan unresolved across reconcile runs.
 - **Plan 006 (bundle)** — before falling through to the generic IN PROGRESS handling below, process the "Plan 006 item selection & status" table first:
