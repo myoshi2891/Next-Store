@@ -156,8 +156,14 @@ Machine-checkable. ALL must hold:
   matches — replace both placeholders with values confirmed during recon
   against this repository (its source layout may not use `src/`); the
   resulting command must be one the executor can run verbatim
-- [ ] No files outside the in-scope list are modified — run all four commands and confirm each reports no in-scope path outside the list:
-  - `git diff --stat <planned-at SHA>..HEAD` (committed since plan's base)
+- [ ] No files outside the in-scope list are modified since execution began — run
+  all four commands and confirm each reports no in-scope path outside the list.
+  Use the **execution base SHA** (the worktree's branch-point commit, captured
+  when the executor was dispatched) for the first command, not the "Planned at"
+  SHA — "Planned at" is for the pre-execution drift check only, and using it
+  here would also surface unrelated commits that landed on the base branch
+  between planning and dispatch:
+  - `git diff --stat <execution base SHA>..HEAD` (committed since dispatch)
   - `git diff --cached --stat` (staged)
   - `git diff --stat` (unstaged)
   - `git ls-files --others --exclude-standard` (untracked)

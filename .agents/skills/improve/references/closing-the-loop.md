@@ -17,7 +17,7 @@ The founding rule survives unchanged: **the advisor never edits source code.** I
 
 ### Dispatch
 
-Spawn **one** `general-purpose` subagent with `isolation: "worktree"`. Executor model: default `sonnet`; use what the user named if they named one (`execute 003 haiku`).
+Spawn **one** `general-purpose` subagent with `isolation: "worktree"`. Executor model: default `sonnet`; use what the user named if they named one (`execute 003 haiku`). Record the worktree's branch-point commit as the **execution base SHA** — you'll need it in Review step 2 below, since it can differ from the plan's "Planned at" SHA (unrelated commits may have landed on the base branch between planning and dispatch).
 
 The subagent prompt must contain:
 
@@ -59,7 +59,7 @@ Note on fresh worktrees: they share git history but not `node_modules` or build 
 Review like a tech lead reviewing a PR against the spec — never fix anything yourself:
 
 1. **Re-run every done criterion** in the worktree. Don't trust the executor's report — verify.
-2. **Scope compliance**: an unstaged `git -C <worktree> diff --stat` alone only shows what the executor left uncommitted — it misses anything the executor committed, staged, or left untracked. Check all of it against the plan's in-scope list: `git -C <worktree> diff --stat <planned-at SHA>..HEAD` (committed since the plan's base), `git -C <worktree> diff --cached --stat` (staged), `git -C <worktree> diff --stat` (unstaged), and `git -C <worktree> ls-files --others --exclude-standard` (untracked). Any file outside scope in any of the four fails review, full stop.
+2. **Scope compliance**: an unstaged `git -C <worktree> diff --stat` alone only shows what the executor left uncommitted — it misses anything the executor committed, staged, or left untracked. Check all of it against the plan's in-scope list: `git -C <worktree> diff --stat <execution base SHA>..HEAD` (committed since dispatch — use the execution base SHA recorded at Dispatch time, not the plan's "Planned at" SHA, which only anchors the pre-dispatch drift check), `git -C <worktree> diff --cached --stat` (staged), `git -C <worktree> diff --stat` (unstaged), and `git -C <worktree> ls-files --others --exclude-standard` (untracked). Any file outside scope in any of the four fails review, full stop.
 3. **Read the full diff.** Judge it against "Why this matters" (does it solve the actual problem?) and the repo conventions named in the plan (does it look like the rest of the codebase?).
 4. **Audit the new tests.** Executors game criteria — a test that asserts nothing meaningful passes `pnpm test` and proves nothing. Read what the tests assert.
 
