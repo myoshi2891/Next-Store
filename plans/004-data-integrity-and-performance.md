@@ -113,11 +113,17 @@ await db.$transaction(async (tx) => {
 }, { isolationLevel: "Serializable" });
 ```
 
-エラー（Serializable 未対応や接続エラー）が発生した場合はフォールバック方式
-（`Cart.version` 楽観的ロック、Step 4 で使用）を選択する。このプリフライト確認を
-省略する場合は、Step 4 で最初に実行される実際の interactive transaction が
-失敗した時点で STOP し、フォールバック方式へ切り替えること（未検証のまま
-Serializable ありきで進めない）。
+Serializable が未対応であることを明示するエラー（例: 分離レベル自体を拒否する
+PostgreSQL/PgBouncer のエラーメッセージ）が返った場合のみフォールバック方式
+（`Cart.version` 楽観的ロック、Step 4 で使用）を選択する。接続断・認証失敗・
+pooler 障害など、Serializable 対応可否を判定できないエラーが発生した場合は
+フォールバックへ切り替えず、STOP して報告し、オペレーターに接続設定の確認を
+求めること（判定不能なエラーを「未対応」と誤認してフォールバックに切り替えると、
+実際には使える Serializable を放棄し、不要な `Cart.version` カラムをスキーマに
+追加してしまう）。このプリフライト確認を省略する場合も同様に、Step 4 で最初に
+実行される実際の interactive transaction が Serializable 未対応を明示するエラーで
+失敗した時点でのみフォールバック方式へ切り替え、それ以外のエラーは STOP して
+報告する（未検証のまま Serializable ありきで進めない）。
 
 `prisma/schema.prisma` に追加:
 
@@ -239,6 +245,12 @@ SQL
 
   `updateCart` が `db` を直接参照しているため、トランザクションクライアント `tx` を
   引数で受け取れるようシグネチャを拡張する（デフォルト値 `db` で後方互換を維持）。
+  **単に引数を追加するだけでなく、関数本体内の `db.cartItem.findMany(...)` と
+  `db.cart.update(...)` の呼び出しを、受け取った引数（`client` などの名前、
+  デフォルト値 `db`）経由の呼び出しに置き換えること**。この置き換えを行わないと、
+  `addToCartAction` のトランザクション内で `updateCart(cart, tx)` を呼んでも
+  内部の読み書きが `tx` の外（別コネクション）で実行され、Serializable
+  分離レベルによる競合検出も `Cart.version` 楽観的ロックの再読込も機能しない。
 
   **シリアライズ失敗時の再試行**: PostgreSQL が直列化失敗（`P2034` /
   `SQLSTATE 40001`）を返した場合は安全に再試行できる。呼び出し箇所を

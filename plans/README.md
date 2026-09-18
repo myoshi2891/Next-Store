@@ -50,6 +50,15 @@ Plan 006 のこの表での上位 Status は、下表「Plan 006 item selection 
    優先して `REJECTED`（理由 1 行）に上書きする。これは Plan 006 の終端状態であり、
    これ以降その回の reconcile では Plan 006 を `IN PROGRESS` に戻さない。
 
+**次回以降の reconcile における REJECTED Plan 006 の扱い**: ある reconcile の
+開始時点で、この表の Plan 006 行の上位 Status が既に `REJECTED` になっている
+場合、その回の reconcile では Plan 006 に対して以下のいずれも行わない
+（選択項目の状態・この表の値を一切変更しない）: 選択項目の `REJECTED` 処理、
+上位 Status の再計算、通常の `IN PROGRESS` 処理。`REJECTED` から再開できるのは
+オペレーターが明示的に新規サイクルを開始した場合のみ — 例えば新しいアプローチの
+1xx プランを作成し、この表の Plan 006 行と対象の選択項目を手動で `TODO` に
+戻す、といった操作を行った場合に限る。
+
 ## Plan 006 item selection & status
 
 Select an item by changing `Selected` to `Yes` and its status to `IN PROGRESS`

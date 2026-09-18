@@ -211,9 +211,15 @@ Clerk は `vi.mock("@clerk/nextjs/server")` で `auth`/`currentUser` をモッ�
 
 - [ ] `bun run test` が exit 0、テスト総数が 53 件以上
 - [ ] `bunx tsc --noEmit` が exit 0
-- [ ] 以下の 4 コマンドのいずれの出力にも `__tests__/` 配下（と必要なら helpers）以外のファイルが含まれない
-      （`git diff --name-only` 単独ではコミット済み・ステージ済み・未追跡の変更を見落とすため使わない）:
-      `git diff --stat 90f91f4..HEAD`、`git diff --cached --name-only`、
+- [ ] allowlist（Scope の 5 ファイル `__tests__/utils/cart-calculations.test.ts`,
+      `__tests__/utils/order-actions.test.ts`, `__tests__/api/payment-route.test.ts`,
+      `__tests__/api/confirm-route.test.ts`, `__tests__/utils/schemas.test.ts`、
+      および Step 1 で作成した場合のみ `__tests__/helpers/mock-db.ts`）に対し、
+      開始時・完了時それぞれで以下 4 コマンドを `--name-only` で実行して変更ファイルを
+      収集し、allowlist 外のパスが 1 件でも含まれていれば失敗とする
+      （`__tests__/` 配下というディレクトリ単位の広い許可ではなく、この明示的な
+      ファイル一覧との突き合わせで判定する）:
+      `git diff --name-only 90f91f4..HEAD`、`git diff --cached --name-only`、
       `git diff --name-only`、`git ls-files --others --exclude-standard`
 - [ ] 現挙動のバグ記録テスト（Step 2 の Float tax、Step 5 の無条件 cart 削除）に
       Plan 003 参照コメントが付いている
