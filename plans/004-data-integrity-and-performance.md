@@ -194,26 +194,43 @@ SQL
   }
   ```
 
-  既存の呼び出し元（`addToCartAction` 以外）は引数なしで呼べるため後方互換が維持される。
+  **これは破壊的なシグネチャ変更である**: 現状の `updateOrCreateCartItem` は
+  オブジェクト引数 `{ productId, cartId, amount }`（`utils/actions.ts:414-422`）を
+  取るが、上記の書き換え後は位置引数 `(cartId, productId, amount, client)` に
+  変わる。現時点での呼び出し元は `addToCartAction`（`utils/actions.ts:498`、
+  `await updateOrCreateCartItem({ productId, cartId: cart.id, amount });`）の
+  **1 箇所のみ**であり、それ以外に後方互換を保つべき既存呼び出し元は存在しない。
+  この 1 箇所は、本 Step で `addToCartAction` をトランザクション化する際に
+  下記の位置引数呼び出し（`updateOrCreateCartItem(cart.id, productId, amount, tx)`）
+  へ合わせて更新すること。
 
 - `toggleFavoriteAction` の create 分岐は、重複時に P2002 エラーとなるため
   try-catch で「既に追加済み」として扱うか、`upsert` に変更する。
 - `addToCartAction`（490-504）の `updateOrCreateCartItem` + `updateCart` を
-  `db.$transaction(async (tx) => { ... }, { isolationLevel: "Serializable" })`
-  で包む。Serializable 分離レベルを指定することで、異なる商品を同時追加した場合の
-  競合による `numItemsInCart` / `cartTotal` / `orderTotal` の不整合を防ぐ。
-  トランザクション内では `updateOrCreateCartItem` と `updateCart` の**両方**に
-  `tx` を渡し、すべての書き込みが同一トランザクションのスコープ内で実行されるようにする:
+  `db.$transaction` で包む。トランザクション内では `updateOrCreateCartItem` と
+  `updateCart` の**両方**に `tx` を渡し、すべての書き込みが同一トランザクションの
+  スコープ内で実行されるようにする。**Step 1 の判定結果で分岐する**: Serializable
+  対応環境（Step 1 で確認済み）では第 2 引数に `{ isolationLevel: "Serializable" }`
+  を渡し、これにより異なる商品を同時追加した場合の競合による `numItemsInCart` /
+  `cartTotal` / `orderTotal` の不整合を防ぐ。Serializable 非対応環境（Step 1 で
+  `Cart.version` フォールバックを選択済み）では第 2 引数を渡さず（デフォルトの
+  分離レベルで実行し）、下記フォールバックの `Cart.version` 楽観的ロックで整合性を
+  保証する。以下の再試行ループ・ロールバック・（フォールバック時の）楽観的ロック
+  処理は両分岐で共通のまま維持する:
 
   ```ts
+  const txOptions = isSerializableSupported
+    ? { isolationLevel: "Serializable" as const }
+    : undefined;
   await db.$transaction(async (tx) => {
     const cart = await tx.cart.findFirst({ where: { clerkId: user.id }, include: includeProductClause });
     if (!cart) throw new Error("Cart not found");
     await updateOrCreateCartItem(cart.id, productId, amount, tx);
     await updateCart(cart, tx);
-  }, { isolationLevel: "Serializable" });
+  }, txOptions);
   ```
 
+  `isSerializableSupported` は Step 1 のプリフライト確認結果を保持する定数/設定値を指す。
   `user` は `addToCartAction` 冒頭の `const user = await getAuthUser();`（`utils/actions.ts:491`）を指す。
 
   `cart` オブジェクトを `updateCart` に渡すことで既存の `updateCart(cart: Cart)` シグネチャと

@@ -5,8 +5,14 @@
 > いずれかが発生したら、即座に停止して報告する。完了したら `plans/README.md` の
 > ステータス行を更新する。
 >
-> **Drift check (最初に実行)**: `git diff --stat 90f91f4..HEAD -- utils/actions.ts utils/schemas.ts app/api/payment/route.ts app/api/confirm/route.ts __tests__/`
-> in-scope 対象のソースが変わっていたら「Current state」の抜粋と比較し、
+> **Drift check (最初に実行)**: 同じ in-scope パス（`utils/actions.ts utils/schemas.ts
+> app/api/payment/route.ts app/api/confirm/route.ts __tests__/`）に対して次の 4 つを
+> すべて実行すること — 1 つだけでは commit 済み・staged・unstaged・untracked の
+> いずれかの変更を見落とす:
+> `git diff --stat 90f91f4..HEAD -- <paths>`（base commit 以降の commit 済み変更）、
+> `git diff --cached --stat -- <paths>`（staged）、`git diff --stat -- <paths>`
+> （unstaged）、`git ls-files --others --exclude-standard -- <paths>`（untracked）。
+> いずれかが in-scope 対象の変更を報告したら「Current state」の抜粋と比較し、
 > 不一致は STOP condition として扱う。
 
 ## Status

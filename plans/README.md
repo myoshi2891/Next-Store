@@ -23,15 +23,32 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED（理由 1 行）| REJECTED�
 Plan 006 のこの表での上位 Status は、下表「Plan 006 item selection & status」の
 状態から導出する: 項目が未選択（全項目 `NOT SELECTED`）または未着手なら `TODO`、
 選択された全項目が `DONE` になった時点で `DONE` に更新する。それ以外
-（いずれかの選択項目が `IN PROGRESS`、`BLOCKED`、`STALE`、`REJECTED` など未完了の
-いずれかの状態にある場合）は `IN PROGRESS` のまま維持する — `BLOCKED`/`STALE`/
-`REJECTED` の選択項目があっても上位 Status を止めない。reconcile 実行時は、
-上位 Status を再計算する**前に**下表の各項目（個別化されている場合は対応する
-1xx プラン）の状態を処理し、`BLOCKED`/`STALE` 項目については通常の reconcile
-手順（原因調査・プラン改訂または REJECTED 化）を適用してその停止理由を
-対応する 1xx プランに反映してから、この表の上位 Status を再計算して
-不整合があれば修正する。この規則は Plan 006 自体を executor に渡さない
-既存の reconcile 分岐（個別 1xx プランを作成して dispatch する）を変更しない。
+（いずれかの選択項目が `IN PROGRESS`、`BLOCKED`、`STALE` など未完了の状態にある
+場合）は `IN PROGRESS` のまま維持する。reconcile 実行時は、上位 Status を
+再計算する**前に**下表の各項目（個別化されている場合は対応する 1xx プラン）の
+状態を処理し、`BLOCKED`/`STALE` 項目については通常の reconcile 手順
+（原因調査・プラン改訂または REJECTED 化）を適用してその停止理由を対応する
+1xx プランに反映してから、この表の上位 Status を再計算して不整合があれば修正する。
+この規則は Plan 006 自体を executor に渡さない既存の reconcile 分岐（個別 1xx
+プランを作成して dispatch する）を変更しない。
+
+**選択項目が `REJECTED` に至った場合の終端ライフサイクル**: `REJECTED` は選択項目の
+放置終端状態ではない — Plan 006 の DONE 判定は「全選択項目が DONE」を要求するため、
+`REJECTED` のまま残る選択項目があると Plan 006 は永久に `IN PROGRESS` から
+抜けられなくなる。項目が `REJECTED` になった reconcile パスの中で、次の 3 つの
+いずれかに解決すること（選んだ結果を下表の Notes 列に一言で記録する）:
+
+1. **スコープから外す**: 項目の `Selected` を `No`、`Status` を `NOT SELECTED` に
+   変更する。以後この項目は「全選択項目」の集合から外れ、Plan 006 の DONE 判定を
+   妨げない。却下理由を Notes に残す。
+2. **代替プランで置き換える**: 却下された理由を踏まえた別アプローチの新規 1xx
+   プランを作成し、Notes にその番号を記録する。項目は `Selected: Yes` のまま
+   `Status` を `TODO`（新プランへの dispatch 待ち）に戻し、通常のライフサイクル
+   （TODO → IN PROGRESS → DONE）に再度乗せる。
+3. **Plan 006 自体を REJECTED にする**: その項目が Plan 006 の趣旨に不可欠で、
+   上記いずれも成立しない場合、この表の Plan 006 行の Status を派生規則より
+   優先して `REJECTED`（理由 1 行）に上書きする。これは Plan 006 の終端状態であり、
+   これ以降その回の reconcile では Plan 006 を `IN PROGRESS` に戻さない。
 
 ## Plan 006 item selection & status
 

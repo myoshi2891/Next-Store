@@ -252,7 +252,16 @@ Step 5 で新設した非同期画像検証経路（`validateWithZodSchemaAsync`
 
 - createProductAction: 非 admin ユーザー（`currentUser` モックが ADMIN_USER_ID 以外を返す）で呼ぶと商品が作成されない
 - toggleFavoriteAction: delete の `where` に `clerkId` が含まれる（モックの呼び出し引数を検証）
-- createReviewAction: `P2002` を返す create モックで重複投稿メッセージを返し、並行リクエストでも重複成功にならない
+- createReviewAction: `P2002` を返す create モックで重複投稿メッセージを返す（単体テスト。
+  モックは実際の並行実行を検証しない）
+- 並行リクエストの排他性検証（可能なら追加）: マイグレーション済みのテスト用 DB に対し、
+  同一 `clerkId`・`productId` で `createReviewAction` を 2 回同時実行し、片方のみ成功
+  （もう一方は Step 3 で追加する `@@unique([clerkId, productId])` 制約により `P2002` で
+  失敗）することを検証する統合テストを追加する。テスト用 DB の用意（`DIRECT_URL` を
+  使った別スキーマ/別 DB でのマイグレーション適用）が本プランのスコープで用意できない
+  場合はこの統合テストを省略してよいが、その場合は上記の `P2002` モック単体テストのみで
+  「重複投稿を拒否する」ことの検証範囲とし、並行実行時の排他性そのものは未検証である旨を
+  Done criteria の該当項目に明記する
 - renderError 相当: 非 ValidationError で内部メッセージが返らない
 - payment ルート: `isPaid: true` の Order で呼ぶと 403 が返り、`stripe.checkout.sessions.create` が呼ばれない（Step 4 参照）
 

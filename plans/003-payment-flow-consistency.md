@@ -222,10 +222,16 @@ Option B: 処理中フラグ）が使うフィールドを参照する。その�
   この予約中ウィンドウの Order も削除対象から外れる）、
   Stripe Checkout が進行中の Order（Option B は `isPending: true` かつ `stripeSessionId`
   非 null、Option A は `checkoutAttempt` が 0 より大きい）を削除しない。このような Order が
-  存在する場合は、`stripe.checkout.sessions.retrieve(stripeSessionId)` で状態を確認し、
+  存在する場合、`stripeSessionId` が保存済み（非 null）であれば
+  `stripe.checkout.sessions.retrieve(stripeSessionId)` で状態を確認し、
   `status === 'open'` なら既存 Order と Cart 接続をそのまま再利用して redirect する
   （新規 Order を作らない）。`status` が `'expired'`/`'complete'` 以外の中断状態であれば
   Stripe 側のセッションを安全に終了させてから通常の削除・再作成フローに進む。
+  **Option A で `checkoutAttempt` が 0 より大きいが `stripeSessionId` がまだ null
+  （予約済みだが Stripe 応答待ちのウィンドウ）の場合は `retrieve` を呼ばない**
+  （ID がなく呼び出せない）。この場合は Order と Cart 接続をそのまま保持し、削除・
+  新規作成のいずれも行わず、Step 4 の予約済みリクエストによる再試行（同じ
+  `idempotencyKey` での Stripe 呼び出し）に処理を委ねる。
   こうすることで、confirm ルートが後から参照する Order を削除して外部キー・404 エラーを
   起こす事態を防ぐ。
 - `updateCart` の再計算と Order 作成を含むトランザクションが、confirm ルートの
@@ -299,8 +305,11 @@ Option B: 処理中フラグ）が使うフィールドを参照する。その�
        `usedCheckoutAttempt` として Stripe を呼び出す。
        `reserved.count === 0` の場合は既に別リクエストが予約済み
        （`checkoutAttempt >= 1`）であることを意味する。Order を再読込し、
-       `stripeSessionId` が依然として `null` なら**新たな予約は行わず**、
-       再読込した `checkoutAttempt` をそのまま `usedCheckoutAttempt` として
+       **まず `order.isPaid` を再確認する**。`true` であれば手順 0 と同様に
+       Stripe 呼び出し・`create` はいずれも行わず、支払い済みである旨のエラーを
+       返して終了する（新規セッションの作成・関連付けは行わない）。`isPaid` が
+       `false` のままで `stripeSessionId` が依然として `null` なら**新たな予約は
+       行わず**、再読込した `checkoutAttempt` をそのまま `usedCheckoutAttempt` として
        同じ `idempotencyKey`（`checkout-${orderId}-${usedCheckoutAttempt}`）で
        Stripe を呼び出す（Stripe 側の冪等キーが同一セッションへ収束させるため、
        DB 側でこれ以上の調整は不要）。`stripeSessionId` が既に保存されていれば
@@ -323,7 +332,7 @@ Option B: 処理中フラグ）が使うフィールドを参照する。その�
 
        ```ts
        const reset = await db.order.updateMany({
-         where: { id: orderId, stripeSessionId: readStripeSessionId, checkoutAttempt: readCheckoutAttempt },
+         where: { id: orderId, isPaid: false, stripeSessionId: readStripeSessionId, checkoutAttempt: readCheckoutAttempt },
          data: { stripeSessionId: null, checkoutAttempt: { increment: 1 } },
        });
        ```
@@ -341,7 +350,7 @@ Option B: 処理中フラグ）が使うフィールドを参照する。その�
 
     ```ts
     const saved = await db.order.updateMany({
-      where: { id: orderId, checkoutAttempt: usedCheckoutAttempt, stripeSessionId: null },
+      where: { id: orderId, isPaid: false, checkoutAttempt: usedCheckoutAttempt, stripeSessionId: null },
       data: { stripeSessionId: session.id },
     });
     ```
@@ -577,6 +586,13 @@ Order と Cart の関係が一致しない 400、無効/未許可の origin で 
   トランザクション内で:
   1. `tx.order.findUnique` で Order を再読込し、`order.clerkId === userId` を
      再確認する（一致しなければ 403 相当のエラーを投げてロールバックする）。
+  1.5. **再読込した `order.isPaid` を再確認する**（トランザクション開始前に読んだ
+     Order は既に古い可能性がある — 別リクエストの confirm 処理がこの直前に
+     完了している競合ケース）。`true` なら、上記の冪等性分岐と同じ扱いとして
+     成功扱いで直ちに処理を終える（`tx.order.update`・Cart の検証・
+     `tx.cart.deleteMany` はいずれも実行しない。Cart が既に削除済みでもエラーに
+     しない）。`false` の場合のみ以下の手順 2 以降（`cartId` 一致検証・Cart 検証・
+     更新・削除）を続ける。
   2. `order.cartId`（DB に永続化済み）と `session.metadata.cartId`（Stripe
      メタデータ由来）が一致することを検証する（不一致なら 400 相当のエラーを
      投げてロールバックする）。
@@ -587,8 +603,8 @@ Order と Cart の関係が一致しない 400、無効/未許可の origin で 
   5. `tx.cart.deleteMany({ where: { id: cart.id } })` を実行し、戻り値の `count` が
      `1` でなければエラーを投げてトランザクション全体をロールバックする
      （この未完了 Order 分岐に到達した時点で Cart が既に消えているのは想定外の
-     状態であり、`0` 件削除を無視して成功扱いにしない — 冪等な再訪は上記の
-     `isPaid === true` 分岐で別途処理済み）。
+     状態であり、`0` 件削除を無視して成功扱いにしない — 冪等な再訪は手順 1.5 で
+     別途処理済み）。
 
   実装例:
 
@@ -596,6 +612,7 @@ Order と Cart の関係が一致しない 400、無効/未許可の origin で 
   await db.$transaction(async (tx) => {
     const order = await tx.order.findUnique({ where: { id: orderId } });
     if (!order || order.clerkId !== userId) throw new ForbiddenError();
+    if (order.isPaid) return; // 冪等な再訪・競合後の再読込: 成功扱いで終了
     if (order.cartId !== session.metadata.cartId) throw new BadRequestError();
     const cart = await tx.cart.findUnique({ where: { id: order.cartId } });
     if (!cart || cart.clerkId !== userId) throw new ForbiddenError();
