@@ -5,19 +5,26 @@
 > いずれかが発生したら、即座に停止して報告する。完了したら `plans/README.md` の
 > ステータス行を更新する。
 >
-> **Drift check (最初に実行)**: 以下の 4 コマンドをすべて同じパス指定で実行する
-> （Done criteria の drift check もこの同一パス指定を再利用する — `git status`
-> 単独では不十分）:
+> **Drift check (最初に実行)**: 以下の allowlist（Done criteria の drift check も
+> この同一 allowlist を再利用する）に対して、**pathspec を付けずにリポジトリ全体を
+> 対象**に次の 4 コマンドを `--name-only` で実行する（pathspec を付けると allowlist
+> 外の変更がそもそも出力に現れず検出できないため、意図的に付けない）:
+>
+> **allowlist**: `prisma/schema.prisma`、`utils/actions.ts`、`components/products/` 配下、
+> `app/cart/page.tsx`
 >
 > ```sh
-> git diff --stat 90f91f4..HEAD -- prisma/schema.prisma utils/actions.ts components/products/ app/cart/page.tsx
-> git diff --cached --stat -- prisma/schema.prisma utils/actions.ts components/products/ app/cart/page.tsx
-> git diff --stat -- prisma/schema.prisma utils/actions.ts components/products/ app/cart/page.tsx
-> git ls-files --others --exclude-standard -- prisma/schema.prisma utils/actions.ts components/products/ app/cart/page.tsx
+> git diff --name-only 90f91f4..HEAD
+> git diff --cached --name-only
+> git diff --name-only
+> git ls-files --others --exclude-standard
 > ```
 >
+> `git status` 単独では不十分（コミット済みドリフトを検出できない）。出力に
+> allowlist 外のパスが1件でも含まれれば STOP condition として扱う。
 > Plan 001/003 による `utils/actions.ts` の変更（認可チェック、丸め処理）は
-> 想定内のドリフト。それ以外は「Current state」と比較し、不一致は STOP。
+> allowlist 内の想定内のドリフト。それ以外の allowlist 内の変更は
+> 「Current state」と比較し、不一致は STOP。
 
 ## Status
 
@@ -236,6 +243,7 @@ SQL
   処理は両分岐で共通のまま維持する:
 
   ```ts
+  const isSerializableSupported = await getIsSerializableSupported();
   const txOptions = isSerializableSupported
     ? { isolationLevel: "Serializable" as const }
     : undefined;
@@ -363,8 +371,8 @@ SQL
 包まれていない）、Step 4 で `addToCartAction` に適用したのと同じ非アトミック性の
 問題を抱える。この 2 つのアクションも Step 4 と同じパターンに変更する:
 CartItem の変更（delete/update）と `updateCart(cart, tx)` 呼び出しを同一の
-`db.$transaction(async (tx) => { ... })` に包み、`isSerializableSupported` に
-応じて `{ isolationLevel: "Serializable" }` を渡すか `Cart.version` の
+`db.$transaction(async (tx) => { ... })` に包み、`await getIsSerializableSupported()`
+で取得した `isSerializableSupported` に応じて `{ isolationLevel: "Serializable" }` を渡すか `Cart.version` の
 compare-and-set フォールバックを使う。`P2034` / `OptimisticLockConflictError` は
 Step 4 と同じ再試行ループ（最大 3 回）で捕捉する。CartItem だけが保存されて
 集計更新が失われる、または逆に集計更新だけが古い値で残る経路を許可しない。
@@ -376,8 +384,9 @@ Step 4 と同じ再試行ループ（最大 3 回）で捕捉する。CartItem �
 
 1. 商品更新・Cart 再計算・合計更新をすべて同一の `db.$transaction(async (tx) => { ... })`
    で囲む。**Step 4 で `addToCartAction` に適用した並行制御と同じ方式を、ここでも
-   使うこと**: `isSerializableSupported`（Step 1 のプリフライト確認結果）が true
-   なら第 2 引数に `{ isolationLevel: "Serializable" }` を渡し、false なら
+   使うこと**: `await getIsSerializableSupported()` で取得した
+   `isSerializableSupported`（Step 1 のプリフライト確認結果をキャッシュした値）が
+   true なら第 2 引数に `{ isolationLevel: "Serializable" }` を渡し、false なら
    Step 4 と同じ `Cart.version` 楽観的ロック（`updateCart` 内で `tx.cart.updateMany`
    による compare-and-set、`count === 0` は再試行）で実行する。いずれの分岐でも
    Step 4 と同じ `P2034`（`SQLSTATE 40001`）再試行ループ（最大 3 回、成功したら
@@ -425,7 +434,8 @@ Step 4 と同じ再試行ループ（最大 3 回）で捕捉する。CartItem �
 `cartTotal` / `orderTotal`（キャッシュされた集計値）は再計算されず、削除された
 商品分だけ過大な値のまま残る。`deleteProductAction` を以下のように変更する。
 **7b と同じ並行制御を適用する**: 下記 1〜3 全体を包む `db.$transaction` の
-第 2 引数は `isSerializableSupported` が true なら `{ isolationLevel: "Serializable" }`、
+第 2 引数は `await getIsSerializableSupported()` で取得した `isSerializableSupported`
+が true なら `{ isolationLevel: "Serializable" }`、
 false なら省略（`updateCart(cart, tx)` 内の `Cart.version` compare-and-set に委ねる）。
 呼び出し全体を Step 4 と同じ `P2034`（`SQLSTATE 40001`）/ `OptimisticLockConflictError`
 再試行ループ（最大 3 回、成功したら即座に抜ける）で包み、競合時は商品削除
@@ -478,11 +488,13 @@ false なら省略（`updateCart(cart, tx)` 内の `Cart.version` compare-and-se
 - [ ] `grep -n "upsert" utils/actions.ts` がヒットする
 - [ ] `grep -rn "fetchFavoriteId(" components/products/FavoriteToggleButton.tsx` → 0 件
 - [ ] `bun run test` / `bunx tsc --noEmit` / `bun run lint` がすべて exit 0
-- [ ] 冒頭の Drift check と同一パス指定の 4 コマンド（`git diff --stat 90f91f4..HEAD`、
-      `git diff --cached --stat`、`git diff --stat`、`git ls-files --others --exclude-standard`、
-      いずれも `-- prisma/schema.prisma utils/actions.ts components/products/ app/cart/page.tsx`）
-      のいずれにも in-scope 外のファイルが含まれない（`git status` 単独では
-      コミット済み・ステージ済みドリフトを見落とすため使わない）
+- [ ] 冒頭の Drift check と同一 allowlist（`prisma/schema.prisma`、`utils/actions.ts`、
+      `components/products/` 配下、`app/cart/page.tsx`）を用いて、pathspec なしで
+      実行した 4 コマンド（`git diff --name-only 90f91f4..HEAD`、
+      `git diff --cached --name-only`、`git diff --name-only`、
+      `git ls-files --others --exclude-standard`）の出力に allowlist 外のパスが
+      1件も含まれない（`git status` 単独ではコミット済み・ステージ済みドリフトを
+      見落とすため使わない）
 - [ ] `plans/README.md` のステータス行を更新済み
 
 ## STOP conditions

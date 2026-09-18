@@ -5,22 +5,29 @@
 > いずれかが発生したら、即座に停止して報告する — 独自判断で回避しないこと。
 > 完了したら `plans/README.md` の該当ステータス行を更新する。
 >
-> **Drift check (最初に実行)**: 以下の 4 コマンドをすべて Scope 記載パス
-> （`utils/actions.ts utils/schemas.ts utils/supabase.ts app/api/payment/route.ts app/api/confirm/route.ts components/reviews/SubmitReview.tsx prisma/schema.prisma prisma/migrations __tests__/security/`）
-> に対して実行する:
+> **Drift check (最初に実行)**: 以下の allowlist に対して、**pathspec を付けずに
+> リポジトリ全体を対象**に次の 4 コマンドを実行し、出力されたファイルパスを
+> allowlist と突き合わせる（pathspec を付けると allowlist 外の変更がそもそも
+> 出力に現れず検出できないため、意図的に付けない）:
+>
+> **allowlist**: `utils/actions.ts` `utils/schemas.ts` `utils/supabase.ts`
+> `app/api/payment/route.ts` `app/api/confirm/route.ts`
+> `components/reviews/SubmitReview.tsx` `prisma/schema.prisma`
+> `prisma/migrations/` 配下、`__tests__/security/` 配下
 >
 > ```sh
-> git diff --stat 90f91f4..HEAD -- utils/actions.ts utils/schemas.ts utils/supabase.ts app/api/payment/route.ts app/api/confirm/route.ts components/reviews/SubmitReview.tsx prisma/schema.prisma prisma/migrations __tests__/security/
-> git diff --cached --stat -- utils/actions.ts utils/schemas.ts utils/supabase.ts app/api/payment/route.ts app/api/confirm/route.ts components/reviews/SubmitReview.tsx prisma/schema.prisma prisma/migrations __tests__/security/
-> git diff --stat -- utils/actions.ts utils/schemas.ts utils/supabase.ts app/api/payment/route.ts app/api/confirm/route.ts components/reviews/SubmitReview.tsx prisma/schema.prisma prisma/migrations __tests__/security/
-> git ls-files --others --exclude-standard -- utils/actions.ts utils/schemas.ts utils/supabase.ts app/api/payment/route.ts app/api/confirm/route.ts components/reviews/SubmitReview.tsx prisma/schema.prisma prisma/migrations __tests__/security/
+> git diff --name-only 90f91f4..HEAD
+> git diff --cached --name-only
+> git diff --name-only
+> git ls-files --others --exclude-standard
 > ```
 >
 > 1つ目はベース SHA 以降のコミット済み変更、2つ目はステージ済み未コミット変更、
-> 3つ目は未ステージの変更、4つ目は未追跡の対象領域ファイルを検出する。
+> 3つ目は未ステージの変更、4つ目は未追跡ファイルを検出する。
 > `git status` 単独では不十分（コミット済みドリフトを検出できない）。
-> いずれかのコマンドが in-scope ファイルの変更を報告した場合は
-> 「Current state」の抜粋と実コードを比較し、不一致があれば STOP condition として扱う。
+> 4 コマンドの出力に allowlist 外のパスが1件でも含まれる場合は STOP condition
+> として扱う。allowlist 内のパスに変更が報告された場合は「Current state」の
+> 抜粋と実コードを比較し、不一致があれば同様に STOP condition として扱う。
 
 ## Status
 
@@ -297,10 +304,15 @@ Step 5 で新設した非同期画像検証経路（`validateWithZodSchemaAsync`
   同時 `createReviewAction` 実行で片方のみ成功したことを確認済みである旨。テスト用
   DB を用意できず `P2002` モック単体テストのみを実施した場合は、重複投稿の拒否は
   検証済みだが並行実行時の排他性そのものは未検証である旨。
-- [ ] Drift check の 4 コマンド（`git diff --stat 90f91f4..HEAD`、`git diff --cached --stat`、
-  `git diff --stat`、`git ls-files --others --exclude-standard`、いずれも同じ in-scope パス指定）
-  のいずれにも in-scope 外のファイルが含まれない（`git status` 単独では
-  コミット済み・ステージ済みドリフトを見落とすため使わない）
+- [ ] Drift check の 4 コマンド（`git diff --name-only 90f91f4..HEAD`、
+  `git diff --cached --name-only`、`git diff --name-only`、
+  `git ls-files --others --exclude-standard`、いずれも pathspec なしでリポジトリ全体が対象）
+  の出力に、冒頭の allowlist（`utils/actions.ts` `utils/schemas.ts` `utils/supabase.ts`
+  `app/api/payment/route.ts` `app/api/confirm/route.ts`
+  `components/reviews/SubmitReview.tsx` `prisma/schema.prisma`
+  `prisma/migrations/` 配下、`__tests__/security/` 配下）外のパスが1件も
+  含まれない（`git status` 単独ではコミット済み・ステージ済みドリフトを
+  見落とすため使わない）
 - [ ] `plans/README.md` のステータス行を更新済み
 
 ## STOP conditions

@@ -5,15 +5,21 @@
 > いずれかが発生したら、即座に停止して報告する。完了したら `plans/README.md` の
 > ステータス行を更新する。
 >
-> **Drift check (最初に実行)**: 同じ in-scope パス（`utils/actions.ts utils/schemas.ts
-> app/api/payment/route.ts app/api/confirm/route.ts __tests__/`）に対して次の 4 つを
-> すべて実行すること — 1 つだけでは commit 済み・staged・unstaged・untracked の
-> いずれかの変更を見落とす:
-> `git diff --stat 90f91f4..HEAD -- <paths>`（base commit 以降の commit 済み変更）、
-> `git diff --cached --stat -- <paths>`（staged）、`git diff --stat -- <paths>`
-> （unstaged）、`git ls-files --others --exclude-standard -- <paths>`（untracked）。
-> いずれかが in-scope 対象の変更を報告したら「Current state」の抜粋と比較し、
-> 不一致は STOP condition として扱う。
+> **Drift check (最初に実行)**: Done criteria と同じ allowlist（`utils/actions.ts`
+> `utils/schemas.ts` `app/api/payment/route.ts` `app/api/confirm/route.ts`
+> `__tests__/utils/cart-calculations.test.ts` `__tests__/utils/order-actions.test.ts`
+> `__tests__/api/payment-route.test.ts` `__tests__/api/confirm-route.test.ts`
+> `__tests__/utils/schemas.test.ts`、Step 1 で作成した場合のみ
+> `__tests__/helpers/mock-db.ts`）を用いて、**pathspec を付けずにリポジトリ全体を
+> 対象**に次の 4 つを `--name-only` で実行すること — 1 つだけでは commit 済み・
+> staged・unstaged・untracked のいずれかの変更を見落とす:
+> `git diff --name-only 90f91f4..HEAD`（base commit 以降の commit 済み変更）、
+> `git diff --cached --name-only`（staged）、`git diff --name-only`
+> （unstaged）、`git ls-files --others --exclude-standard`（untracked）。
+> pathspec を付けると allowlist 外の変更がそもそも出力に現れず検出できないため、
+> 意図的に付けない。出力に allowlist 外のパスが1件でも含まれれば STOP condition
+> として扱う。allowlist 内のパスに変更が報告されたら「Current state」の抜粋と
+> 比較し、不一致も STOP condition として扱う。
 
 ## Status
 
