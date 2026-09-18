@@ -25,17 +25,10 @@ describe("Server Action の prevState 型安全性", () => {
 			resolve(__dirname, "../../utils/actions.ts"),
 			"utf-8"
 		);
-		const lines = content.split("\n");
-		const prevStateLines = lines.filter((line) =>
-			line.includes("prevState")
-		);
-
-		for (const line of prevStateLines) {
-			expect(
-				line,
-				`actions.ts: "${line.trim()}" で prevState: any が使われています`
-			).not.toMatch(/prevState\s*:\s*any/);
-		}
+		expect(
+			content,
+			"actions.ts で prevState: any が使われています"
+		).not.toMatch(/\bprevState\s*:\s*any\b/);
 	});
 
 	it("FormContainer の initialState が actionFunction の prevState 型と一致する", () => {
