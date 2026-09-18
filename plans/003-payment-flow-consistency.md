@@ -314,6 +314,20 @@ Option B: 処理中フラグ）が使うフィールドを参照する。その�
        Stripe を呼び出す（Stripe 側の冪等キーが同一セッションへ収束させるため、
        DB 側でこれ以上の調整は不要）。`stripeSessionId` が既に保存されていれば
        手順 1 以降（取得・再利用フロー）に進む。
+
+       **`idempotency_key_in_use` の扱い**: 予約者（`reserved.count === 1`）と
+       ほぼ同時に到着した別リクエストがこの再利用経路に入った場合、予約者の
+       `stripe.checkout.sessions.create` 呼び出しがまだ処理中で `stripeSessionId`
+       が未保存のことがある。この状態で同じ `idempotencyKey` を使うと Stripe は
+       セッションを返さず `idempotency_key_in_use` エラー（該当キーが処理中）を
+       返すことがある。このエラーを捕捉した場合は新しい `idempotencyKey` を
+       発行せず、同じキーのまま短い上限付き指数バックオフ（例: 100ms → 200ms →
+       400ms、最大 3 回）で `stripe.checkout.sessions.create` を再試行する。
+       再試行のいずれかが成功すれば予約者と同一の Session が返る。上限に達しても
+       解決しない場合は `stripeSessionId` を再読込し、保存されていれば
+       `stripe.checkout.sessions.retrieve` でそのセッションを取得して返す
+       （新規 `create` は行わない）。それでも `stripeSessionId` が未保存なら
+       一時的なエラーとしてユーザーに再試行を促す。
        この予約により、`createOrderAction`（Step 3）の未払い Order 削除は
        `checkoutAttempt: 0` を除外条件とするため、Stripe 応答待ちの間
        （`stripeSessionId` がまだ書き込まれていない区間）もこの Order を

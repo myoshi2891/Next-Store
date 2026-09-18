@@ -72,7 +72,8 @@
 **In scope**:
 - `prisma/schema.prisma`（制約・インデックス追加、および Serializable 分離レベルが
   使えない場合のフォールバックとして `Cart.version Int @default(0)` カラムの追加
-  （下記ステップ参照）。既存カラムの型変更は禁止）
+  （下記ステップ参照）。既存カラムの型変更は禁止）と、この変更で生成される
+  `prisma/migrations/` 配下のマイグレーション（plans/001 の Scope と同じ扱い）
 - `utils/actions.ts`（`updateOrCreateCartItem`, `addToCartAction`, `toggleFavoriteAction`, `fetchFavoriteId` 周辺）
 - `components/products/FavoriteToggleButton.tsx`, `ProductsGrid.tsx`, `ProductsList.tsx`, `ProductsContainer.tsx`
 - `app/cart/page.tsx`
@@ -341,7 +342,16 @@ SQL
 商品価格が変更された場合（`data.price !== undefined`）に以下の処理を追加する:
 
 1. 商品更新・Cart 再計算・合計更新をすべて同一の `db.$transaction(async (tx) => { ... })`
-   で囲む。トランザクション内での処理順:
+   で囲む。**Step 4 で `addToCartAction` に適用した並行制御と同じ方式を、ここでも
+   使うこと**: `isSerializableSupported`（Step 1 のプリフライト確認結果）が true
+   なら第 2 引数に `{ isolationLevel: "Serializable" }` を渡し、false なら
+   Step 4 と同じ `Cart.version` 楽観的ロック（`updateCart` 内で `tx.cart.updateMany`
+   による compare-and-set、`count === 0` は再試行）で実行する。いずれの分岐でも
+   Step 4 と同じ `P2034`（`SQLSTATE 40001`）再試行ループ（最大 3 回、成功したら
+   即座に抜ける）で呼び出し全体を包む。これを怠ると、商品価格更新中に別リクエストの
+   `addToCartAction` が同じ Cart に書き込んだ場合、どちらか一方の更新が古い集計値で
+   上書きされ、`numItemsInCart`/`cartTotal`/`orderTotal` が実際の CartItem と
+   食い違う。トランザクション内での処理順:
 
    a. `tx.product.update()` で商品を更新する。
 
@@ -362,6 +372,11 @@ SQL
    するか、非トランザクション呼び出し元を `db.$transaction` でラップする）。
 
    これにより商品更新・Cart 検索・合計更新の3操作が同一 `tx` を共有し、不可分になる。
+
+   **回帰テスト**: `updateProductAction` による価格変更と、同じ Cart への
+   `addToCartAction` を同時実行（モックで再現、可能なら Step 4 と同様に実 DB での
+   並行実行テストも追加）し、実行後の CartItem・`numItemsInCart`・`cartTotal`・
+   `orderTotal` が整合していることを確認するテストを追加する。
 
 3. **表示の一貫性**: `CartItemsList`（カート内商品一覧）と `CartTotals`（合計欄）は
    ともに `fetchOrCreateCart`（7a で write-on-read を除去済み）の戻り値に依存するため、

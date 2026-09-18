@@ -289,7 +289,9 @@ Step 5 で新設した非同期画像検証経路（`validateWithZodSchemaAsync`
 - [ ] Step 7 の `createProductAction`（非 admin）テストが `db.product.create` の
   未呼び出しを spy アサーションで検証しており、`bun run test` でパスする
   （ソース全体の grep による呼び出し順序チェックはこの挙動テストで代替済みのため行わない）
-- [ ] `grep -n "authorName" components/reviews/SubmitReview.tsx` が 0 件
+- [ ] `grep -n "authorName\|authorImageUrl" components/reviews/SubmitReview.tsx` が 0 件
+  （どちらもクライアント発の hidden input であり、`createReviewAction` 側で
+  `user.firstName`/`user.imageUrl` に置き換える対象のため、片方だけでは不十分）
 - [ ] Drift check の 4 コマンド（`git diff --stat 90f91f4..HEAD`、`git diff --cached --stat`、
   `git diff --stat`、`git ls-files --others --exclude-standard`、いずれも同じ in-scope パス指定）
   のいずれにも in-scope 外のファイルが含まれない（`git status` 単独では
